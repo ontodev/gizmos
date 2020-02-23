@@ -24,3 +24,6 @@ OBI:0000025 goodbye
 OBI:0000026 seeya
 OBI:0000027 in a while, crocodile
 OBI:0000028 'till soon!
+OBI:0000029 boofy
+OBI:0000030 moofy
+OBI:0000031 foo
