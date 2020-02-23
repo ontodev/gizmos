@@ -209,7 +209,7 @@ def main():
 
   # Prompt the user if no commit message was supplied:
   commit_msg = args.get('commit_message')
-  if not commit_msg:
+  if not commit_msg or not commit_msg.strip():
     try:
       commit_msg = input("Please enter a commit message: ").strip()
       if not commit_msg:
