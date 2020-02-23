@@ -1,0 +1,2 @@
+OBI:0000001 test term 1
+OBI:0000002 test term 2
