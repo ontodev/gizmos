@@ -12,7 +12,6 @@ import textwrap
 
 from urllib.parse import urlencode
 
-PWD = os.path.dirname(os.path.realpath(__file__))
 
 GITHUB_API_ACCESS_TOKEN = os.getenv('GITHUB_API_ACCESS_TOKEN')
 if not GITHUB_API_ACCESS_TOKEN:
@@ -58,7 +57,7 @@ def github_post(endpoint, data):
 
   try:
     data = json.dumps(data)
-  except Exception as e:
+  except Exception:
     logger.error("Unable to convert {} to JSON.")
     sys.exit(1)
 
@@ -78,7 +77,7 @@ def github_put(endpoint, data):
 
   try:
     data = json.dumps(data)
-  except Exception as e:
+  except Exception:
     logger.error("Unable to convert {} to JSON.")
     sys.exit(1)
 
@@ -180,8 +179,8 @@ def main():
   Read a number of terms either from the command line or from a file (containing one term per line)
   and add them to the list of reserved terms in {}/{}/{} on the branch {}, checking first to verify
   that none of the terms are either published (in {}) or already reserved. If no commit message is
-  specified, the user will be prompted to supply one.'''
-  .format(GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE, GITHUB_BRANCH, PUBLISHED_FILE))
+  specified, the user will be prompted to supply one.'''.format(
+    GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE, GITHUB_BRANCH, PUBLISHED_FILE))
   parser = argparse.ArgumentParser(description=description)
 
   parser.add_argument('--commit_message', metavar='MESSAGE',
@@ -190,11 +189,11 @@ def main():
 
   term_args = parser.add_mutually_exclusive_group(required=True)
   term_args.add_argument('--terms', metavar='TERM', nargs='+',
-                          help=('A list of terms to add, separated by spaces. If a term contains '
-                                'spaces it should be surounded by single or double quotes'))
+                         help=('A list of terms to add, separated by spaces. If a term contains '
+                               'spaces it should be surounded by single or double quotes'))
 
   term_args.add_argument('--input', type=argparse.FileType('r'),
-                          help='A file containing a list of terms to add, one per line')
+                         help='A file containing a list of terms to add, one per line')
   args = vars(parser.parse_args())
 
   if args.get('input'):
