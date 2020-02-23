@@ -19,3 +19,6 @@ OBI:0000020 test label 212
 OBI:0000021 test label 320
 OBI:0000022 test label 3211
 OBI:0000023 test label 3212
+OBI:0000024 hello
+OBI:0000025 goodbye
+OBI:0000026 seeya
