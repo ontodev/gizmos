@@ -10,3 +10,6 @@ OBI:0000011 dummy 65
 OBI:0000012 dummy 66
 OBI:0000013 test label 1
 OBI:0000014 test label 2
+OBI:0000015 test label 0
+OBI:0000016 test label 11
+OBI:0000017 test label 12
