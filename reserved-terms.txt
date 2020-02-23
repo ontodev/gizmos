@@ -16,3 +16,6 @@ OBI:0000017 test label 12
 OBI:0000018 test label 20
 OBI:0000019 test label 211
 OBI:0000020 test label 212
+OBI:0000021 test label 320
+OBI:0000022 test label 3211
+OBI:0000023 test label 3212
