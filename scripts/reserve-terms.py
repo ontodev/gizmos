@@ -9,23 +9,26 @@ import re
 import requests
 import sys
 import textwrap
+import yaml
 
 from urllib.parse import urlencode
 
 
+# Github API-related parameters:
 GITHUB_API_ACCESS_TOKEN = os.getenv('GITHUB_API_ACCESS_TOKEN')
 if not GITHUB_API_ACCESS_TOKEN:
-  raise Exception("Could not determine GITHUB_API_ACCESS_TOKEN")
+  print("Please set environment variable GITHUB_API_ACCESS_TOKEN before running this script.")
+  sys.exit(1)
 
 GITHUB_API_URL = 'https://api.github.com'
 GITHUB_API_DEFAULT_HEADERS = {'Authorization': 'token ' + GITHUB_API_ACCESS_TOKEN,
                               'Accept': 'application/vnd.github.v3+json'}
 
-GITHUB_REPO = 'gizmos'
-GITHUB_OWNER = 'ontodev'
-GITHUB_BRANCH = 'term-ids'
-PUBLISHED_FILE = 'published-terms.txt'
-RESERVED_FILE = 'reserved-terms.txt'
+# The directory where this script is located:
+pwd = os.path.dirname(os.path.realpath(__file__))
+
+# Initialize a global configuration map, which will be loaded in main():
+config = {}
 
 # Initialize the logger:
 logging.basicConfig(format='%(asctime)-15s %(name)s %(levelname)s - %(message)s')
@@ -96,10 +99,12 @@ def get_terms_files_contents():
   logger.info("Retrieving currently published and reserved terms ...")
 
   info_to_return = {}
-  for filename in [PUBLISHED_FILE, RESERVED_FILE]:
-    response = github_get("/repos/{owner}/{repo}/contents/{path}"
-                          .format(owner=GITHUB_OWNER, repo=GITHUB_REPO, path=filename),
-                          {'ref': GITHUB_BRANCH})
+  for filename in [config['published_file'], config['reserved_file']]:
+    response = github_get(
+      "/repos/{owner}/{repo}/contents/{path}"
+      .format(owner=config['github_owner'], repo=config['github_repo'], path=filename),
+      {'ref': config['repo_branch']})
+
     if 'sha' not in response:
       raise Exception("Could not determine SHA for {}".format(filename))
     if 'content' not in response:
@@ -117,11 +122,15 @@ def commit_reserved(content, commit_msg, sha):
   uses to identify the file for the reserved terms list, create a commit and then return the URL
   for that commit.
   """
-  logger.info("Committing to {}/{}/{}".format(GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE))
-  response = github_put('/repos/{}/{}/contents/{}'.format(GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE),
+  logger.info("Committing to {}/{}/{}".format(
+    config['github_owner'], config['github_repo'], config['reserved_file']))
+
+  response = github_put('/repos/{}/{}/contents/{}'.format(config['github_owner'],
+                                                          config['github_repo'],
+                                                          config['reserved_file']),
                         {'message': commit_msg,
                          'content': base64.b64encode(content.encode("utf-8")).decode(),
-                         'branch': GITHUB_BRANCH,
+                         'branch': config['repo_branch'],
                          'sha': sha})
 
   if 'commit' not in response or 'html_url' not in response['commit']:
@@ -138,10 +147,10 @@ def get_next_ontology_id(labels_to_add, current_terms):
   be added.
   """
   used_ids = []
-  for filename in [PUBLISHED_FILE, RESERVED_FILE]:
+  for filename in [config['published_file'], config['reserved_file']]:
     for line in current_terms[filename]['content'].splitlines():
       line = line.strip()
-      matched = re.match(r"^OBI:(\d+)\s+(.+)", line)
+      matched = re.match(r"^{idspace}:(\d+)\s+(.+)".format(idspace=config['idspace']), line)
       if not matched:
         logger.warning("Ignoring line: '{}' in {} that could not be parsed."
                        .format(line, filename))
@@ -163,7 +172,9 @@ def prepare_new_reserved_term_content(current_reserved_content, labels_to_add, n
   """
   new_reserved_term_content = current_reserved_content
   for i in range(0, len(labels_to_add)):
-    next_line = "OBI:{} {}".format(str(next_id + i).zfill(7), labels_to_add[i])
+    next_line = "{}:{} {}".format(config['idspace'],
+                                  str(next_id + i).zfill(config['id_digits']),
+                                  labels_to_add[i])
     print("Adding {}".format(next_line))
     if new_reserved_term_content != "":
       new_reserved_term_content += "\n"
@@ -173,13 +184,26 @@ def prepare_new_reserved_term_content(current_reserved_content, labels_to_add, n
 
 
 def main():
-  description = textwrap.dedent('''
-  Read a number of labels either from the command line or from a file (containing one label per
-  line) and add corresponding terms to the list of reserved terms in {}/{}/{} on the branch {},
-  checking first to verify that there are no terms either already published or reserved with those
-  labels. If no commit message is specified, the user will be prompted to supply one.'''.format(
-    GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE, GITHUB_BRANCH, PUBLISHED_FILE))
-  parser = argparse.ArgumentParser(description=description)
+  parser = argparse.ArgumentParser(
+    formatter_class=argparse.RawTextHelpFormatter,
+    description=textwrap.dedent('''
+    Reads a number of labels either from the command line or from a local file (containing one label
+    per line) and adds corresponding terms to a remote file (containing the list of currently
+    reserved terms) located on a specific branch of a particular repository. If any of the supplied
+    labels are already published or reserved, the script exits with an error without modifying the
+    reserved list.
+
+    The name of the remote file, branch, and repository are read from a configuration file which can
+    be specified on the command line, or which otherwise defaults to 'gizmos.yml' in the same
+    directory as this script.
+
+    The update of the reserved list in the repository will be accompanied by a commit message. If
+    no commit message has been given on the command line, the user will be prompted to supply one.
+    '''))
+
+  parser.add_argument(
+    '-c', '--config', metavar='FILE',
+    help="Read configuration from FILE instead of from '{}/gizmos.yml'".format(pwd))
 
   parser.add_argument('-m', '--message', metavar='MESSAGE',
                       help=('The message describing the commit in Github. It should include a '
@@ -193,6 +217,25 @@ def main():
   label_args.add_argument('-i', '--input', type=argparse.FileType('r'),
                           help='A file containing a list of labels to add, one per line')
   args = vars(parser.parse_args())
+
+  # Load the configuration either from the user-specified file or from the default location:
+  global config
+  config_filename = args.get('config') or (pwd + "/gizmos.yml")
+  with open(config_filename) as yaml_file:
+    config = yaml.load(yaml_file, Loader=yaml.SafeLoader)
+
+  # Verify that the configuration contains all the required parameters:
+  required_params = ['idspace', 'github_repo', 'github_owner']
+  if any([config.get(param) is None for param in required_params]):
+    print("Invalid configuration. One or more of the following was not specified: {}"
+          .format(', '.join(required_params)))
+    sys.exit(1)
+
+  # Read these from the config file or use the defaults specified below:
+  config['id_digits'] = config.get('id_digits') or 7
+  config['repo_branch'] = config.get('repo_branch') or 'term-ids'
+  config['published_file'] = config.get('published_file') or 'published-terms.txt'
+  config['reserved_file'] = config.get('reserved_file') or 'reserved-terms.txt'
 
   # When --input is not specified, we will be reading labels from stdin, and this will interfere
   # with reading the commit message. So we force the user to supply a message if he hasn't supplied
@@ -228,9 +271,10 @@ def main():
   next_id = get_next_ontology_id(labels_to_add, current_terms)
   # Prepare the contents of the file listing reserved commits (including the new ones):
   new_reserved_term_content = prepare_new_reserved_term_content(
-    current_terms[RESERVED_FILE]['content'], labels_to_add, next_id)
+    current_terms[config['reserved_file']]['content'], labels_to_add, next_id)
   # Commit the file and inform the user where (s)he can view the commit contents:
-  url = commit_reserved(new_reserved_term_content, commit_msg, current_terms[RESERVED_FILE]['sha'])
+  url = commit_reserved(new_reserved_term_content, commit_msg,
+                        current_terms[config['reserved_file']]['sha'])
   print("Commit successful. You can review it on github at: {}".format(url))
 
 

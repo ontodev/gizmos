@@ -1,0 +1,10 @@
+idspace: OBI
+id_digits: 7
+github_repo: gizmos
+github_owner: ontodev
+# Branch in the repository that has the files containing the lists of published and reserved terms:
+repo_branch: term-ids
+# File in the repository on `repo_branch` containing the list of pubished terms:
+published_file: published-terms.txt
+# File in the repository on `repo_branch` containing the list of reserved terms:
+reserved_file: reserved-terms.txt
