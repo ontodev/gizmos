@@ -36,3 +36,5 @@ OBI:0000037 test label 13212
 OBI:0000038 one
 OBI:0000039 two
 OBI:0000040 three
+OBI:0000041 twelve
+OBI:0000042 thirteeen
