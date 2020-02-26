@@ -185,7 +185,7 @@ def main():
                       help=('The message describing the commit in Github. It should include a '
                             'comment with a GitHub issue or PR number (e.g. #1234).'))
 
-  label_args = parser.add_mutually_exclusive_group(required=True)
+  label_args = parser.add_mutually_exclusive_group(required=False)
   label_args.add_argument('-l', '--labels', metavar='LABEL', nargs='+',
                           help=('A list of labels to add, separated by spaces. If a label contains '
                                 'spaces it should be surounded by single or double quotes'))
@@ -194,11 +194,17 @@ def main():
                           help='A file containing a list of labels to add, one per line')
   args = vars(parser.parse_args())
 
-  if args.get('input'):
-    # Ignore any empty lines.
-    labels_to_add = [l.strip() for l in args.get('input').readlines() if l.strip() != ""]
-  else:
-    labels_to_add = args.get('labels')
+  # When --input is not specified, we will be reading labels from stdin, and this will interfere
+  # with reading the commit message. So we force the user to supply a message if he hasn't supplied
+  # an input:
+  if not args.get('input') and not args.get('message'):
+    print("The --message option must be specified when the --input option is omitted.")
+    sys.exit(1)
+
+  labels_to_add = args.get('labels')
+  if not labels_to_add:
+    input_stream = args.get('input') or sys.stdin
+    labels_to_add = [l.strip() for l in input_stream.readlines() if l.strip() != ""]
 
   # This might happen if the labels are given through an input file and it is empty:
   if not labels_to_add:
