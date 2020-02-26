@@ -88,9 +88,9 @@ def github_put(endpoint, data):
   return response.json()
 
 
-def get_term_files_content():
+def get_terms_files_contents():
   """
-  For the lists of published and reserved commits stored in github, return their contents and
+  For the lists of published and reserved terms stored in github, return their contents and
   the SHA used by github to identify their respective files.
   """
   logger.info("Retrieving currently published and reserved terms ...")
@@ -131,15 +131,14 @@ def commit_reserved(content, commit_msg, sha):
   return response['commit']['html_url']
 
 
-def get_next_ontology_id(terms_to_add, current_terms):
+def get_next_ontology_id(labels_to_add, current_terms):
   """
   Given a list of current terms, return the next unique ontology id to use for subsequent term
-  additions, while verifying that none of the given terms to be added already exist.
+  additions, while verifying that none of the current terms have a label in the list of labels to
+  be added.
   """
   used_ids = []
-  used_terms = {}
   for filename in [PUBLISHED_FILE, RESERVED_FILE]:
-    used_terms[filename] = []
     for line in current_terms[filename]['content'].splitlines():
       line = line.strip()
       matched = re.match(r"^OBI:(\d+)\s+(.+)", line)
@@ -148,24 +147,23 @@ def get_next_ontology_id(terms_to_add, current_terms):
                        .format(line, filename))
       else:
         used_ids.append(int(matched[1]))
-        used_term = matched[2]
-        if used_term in terms_to_add:
-          logger.error("Proposed new term: '{}' already exists in {}. Exiting."
-                       .format(used_term, filename))
+        used_label = matched[2]
+        if used_label in labels_to_add:
+          logger.error("Proposed new label: '{}' already exists in {}. Exiting."
+                       .format(used_label, filename))
           sys.exit(1)
-        used_terms[filename].append(used_term)
 
   return (sorted(used_ids).pop() + 1) if used_ids else 1
 
 
-def prepare_new_reserved_term_content(current_reserved_content, terms_to_add, next_id):
+def prepare_new_reserved_term_content(current_reserved_content, labels_to_add, next_id):
   """
-  Append the given terms to add to the content of the current reserved list of terms, using ids
+  Append terms for the given labels to the content of the current reserved list of terms, using ids
   beginning at the given next_id, and return the new list.
   """
   new_reserved_term_content = current_reserved_content
-  for i in range(0, len(terms_to_add)):
-    next_line = "OBI:{} {}".format(str(next_id + i).zfill(7), terms_to_add[i])
+  for i in range(0, len(labels_to_add)):
+    next_line = "OBI:{} {}".format(str(next_id + i).zfill(7), labels_to_add[i])
     print("Adding {}".format(next_line))
     if new_reserved_term_content != "":
       new_reserved_term_content += "\n"
@@ -176,39 +174,39 @@ def prepare_new_reserved_term_content(current_reserved_content, terms_to_add, ne
 
 def main():
   description = textwrap.dedent('''
-  Read a number of terms either from the command line or from a file (containing one term per line)
-  and add them to the list of reserved terms in {}/{}/{} on the branch {}, checking first to verify
-  that none of the terms are either published (in {}) or already reserved. If no commit message is
-  specified, the user will be prompted to supply one.'''.format(
+  Read a number of labels either from the command line or from a file (containing one label per
+  line) and add corresponding terms to the list of reserved terms in {}/{}/{} on the branch {},
+  checking first to verify that there are no terms either already published or reserved with those
+  labels. If no commit message is specified, the user will be prompted to supply one.'''.format(
     GITHUB_OWNER, GITHUB_REPO, RESERVED_FILE, GITHUB_BRANCH, PUBLISHED_FILE))
   parser = argparse.ArgumentParser(description=description)
 
-  parser.add_argument('--commit_message', metavar='MESSAGE',
+  parser.add_argument('-m', '--message', metavar='MESSAGE',
                       help=('The message describing the commit in Github. It should include a '
                             'comment with a GitHub issue or PR number (e.g. #1234).'))
 
-  term_args = parser.add_mutually_exclusive_group(required=True)
-  term_args.add_argument('--terms', metavar='TERM', nargs='+',
-                         help=('A list of terms to add, separated by spaces. If a term contains '
-                               'spaces it should be surounded by single or double quotes'))
+  label_args = parser.add_mutually_exclusive_group(required=True)
+  label_args.add_argument('-l', '--labels', metavar='LABEL', nargs='+',
+                          help=('A list of labels to add, separated by spaces. If a label contains '
+                                'spaces it should be surounded by single or double quotes'))
 
-  term_args.add_argument('--input', type=argparse.FileType('r'),
-                         help='A file containing a list of terms to add, one per line')
+  label_args.add_argument('-i', '--input', type=argparse.FileType('r'),
+                          help='A file containing a list of labels to add, one per line')
   args = vars(parser.parse_args())
 
   if args.get('input'):
     # Ignore any empty lines.
-    terms_to_add = [l.strip() for l in args.get('input').readlines() if l.strip() != ""]
+    labels_to_add = [l.strip() for l in args.get('input').readlines() if l.strip() != ""]
   else:
-    terms_to_add = args.get('terms')
+    labels_to_add = args.get('labels')
 
-  # This might happen if the terms are given through an input file and it is empty:
-  if not terms_to_add:
-    logger.error("No terms specified.")
+  # This might happen if the labels are given through an input file and it is empty:
+  if not labels_to_add:
+    logger.error("No labels specified.")
     sys.exit(1)
 
   # Prompt the user if no commit message was supplied:
-  commit_msg = args.get('commit_message')
+  commit_msg = args.get('message')
   if not commit_msg or not commit_msg.strip():
     try:
       commit_msg = input("Please enter a commit message: ").strip()
@@ -219,12 +217,12 @@ def main():
       sys.exit(1)
 
   # Retrieve the currently published and reserved terms:
-  current_terms = get_term_files_content()
+  current_terms = get_terms_files_contents()
   # Determine the next id to use based on the current list:
-  next_id = get_next_ontology_id(terms_to_add, current_terms)
+  next_id = get_next_ontology_id(labels_to_add, current_terms)
   # Prepare the contents of the file listing reserved commits (including the new ones):
   new_reserved_term_content = prepare_new_reserved_term_content(
-    current_terms[RESERVED_FILE]['content'], terms_to_add, next_id)
+    current_terms[RESERVED_FILE]['content'], labels_to_add, next_id)
   # Commit the file and inform the user where (s)he can view the commit contents:
   url = commit_reserved(new_reserved_term_content, commit_msg, current_terms[RESERVED_FILE]['sha'])
   print("Commit successful. You can review it on github at: {}".format(url))
