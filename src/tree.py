@@ -321,7 +321,7 @@ def terms2rdfa(cur, treename, term_ids):
             },
         ],
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
-        ["title", data["labels"].get(term_ids[0], "Term")],
+        ["title", data["labels"].get(term_ids[0], treename + " Browser")],
     ]
     body = ["body", {"class": "container"}] + terms
     body.append(
