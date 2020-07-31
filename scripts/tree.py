@@ -94,21 +94,20 @@ def term2tree(data, treename, term_id):
     parents = tree["parents"]
     if parents:
         node = parents[0]
-        if term_id != "NCBITaxon:1":
-            while node and i < 100:
-                i += 1
-                predicate = "rdfs:subClassOf"
-                oc = node
-                object_label = tree_label(data, treename, node)
-                o = ["a", {"rel": predicate, "resource": oc}, object_label]
-                hierarchy = ["ul", ["li", o, hierarchy]]
-                parents = data[treename][node]["parents"]
-                if len(parents) == 0:
-                    break
-                parent = parents[0]
-                if node == parent:
-                    break
-                node = parent
+        while node and i < 100:
+            i += 1
+            predicate = "rdfs:subClassOf"
+            oc = node
+            object_label = tree_label(data, treename, node)
+            o = ["a", {"rel": predicate, "resource": oc}, object_label]
+            hierarchy = ["ul", ["li", o, hierarchy]]
+            parents = data[treename][node]["parents"]
+            if len(parents) == 0:
+                break
+            parent = parents[0]
+            if node == parent:
+                break
+            node = parent
 
     hierarchy.insert(1, {"id": "hierarchy", "class": "col-md"})
     return hierarchy
