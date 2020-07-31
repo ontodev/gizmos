@@ -35,8 +35,7 @@ def main():
 
 def curie2href(curie):
     """Convert a CURIE to an HREF"""
-    # TODO - this will replace curie2iri
-    return f"?term={curie}".replace("#", "%23")
+    return f"?id={curie}".replace("#", "%23")
 
 
 def curie2iri(prefixes, curie):
@@ -243,7 +242,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     pcs = list(s2.keys())
     pcs.sort()
     for predicate in pcs:
-        p = ["a", {"href": curie2iri(prefixes, predicate)}, labels.get(predicate, predicate)]
+        p = ["a", {"href": curie2href(predicate)}, labels.get(predicate, predicate)]
         os = []
         for row in s2[predicate]:
             if row == label_row:
@@ -377,7 +376,7 @@ def render(prefixes, element, depth=0):
     if len(element) > 0 and isinstance(element[0], dict):
         attrs = element.pop(0)
         if tag == "a" and "href" not in attrs and "resource" in attrs:
-            attrs["href"] = curie2iri(prefixes, attrs["resource"])
+            attrs["href"] = curie2href(attrs["resource"])
         for key, value in attrs.items():
             if key in ["checked"]:
                 if value:
@@ -434,7 +433,7 @@ def row2po(prefixes, data, row):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2iri(prefixes, predicate)}, predicate_label]
+    p = ["a", {"href": curie2href(predicate)}, predicate_label]
     o = row2o(data, row)
     return [p, o]
 
