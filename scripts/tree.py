@@ -349,7 +349,7 @@ def terms2rdfa(cur, treename, term_ids):
         ]
     )
     html = ["html", head, body]
-    output = "Content-type: text/html\n\n" + render(all_prefixes, html)
+    output = "Content-Type: text/html\n\n" + render(all_prefixes, html)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
