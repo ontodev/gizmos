@@ -200,12 +200,10 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     selected_label = labels[term_id]
 
     label = term_id
-    label_row = None
     for row in stanza:
         predicate = row["predicate"]
         value = row["value"]
         if predicate == "rdfs:label" and value == selected_label:
-            label_row = row
             label = value
             break
 
@@ -254,8 +252,6 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         p = ["a", {"href": curie2href(predicate)}, labels.get(predicate, predicate)]
         os = []
         for row in s2[predicate]:
-            if row == label_row:
-                continue
             if predicate == "rdfs:subClassOf" and row["object"].startswith("_:"):
                 # TODO - render blank nodes properly
                 continue
@@ -334,7 +330,14 @@ def terms2rdfa(cur, treename, term_ids):
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
         ["title", data["labels"].get(term_ids[0], treename + " Browser")],
     ]
-    body = ["body", {"class": "container"}] + terms
+
+    # Create the prefix element
+    pref_strs = []
+    for prefix, base in all_prefixes:
+        pref_strs.append(f"{prefix}: {base}")
+    pref_str = "\n".join(pref_strs)
+
+    body = ["body", {"class": "container", "prefix": pref_str}] + terms
     body.append(
         [
             "script",
