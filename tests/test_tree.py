@@ -71,13 +71,20 @@ def test_tree():
 
     # Check that no triples have been added
     for p, o in graph.predicate_objects(subject):
-        if (subject, URIRef(p), Literal(str(o))) not in graph and (
+        if str(p) == "http://www.w3.org/2000/01/rdf-schema#subClassOf":
+            # Skip subclasses since they are built from the entire tree
+            continue
+        if (subject, URIRef(p), Literal(str(o))) not in expected_graph and (
             subject,
             URIRef(p),
             URIRef(o),
-        ) not in graph:
+        ) not in expected_graph:
             success = False
             print(f"Added {p}: {o}")
 
     if not success:
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    test_tree()
