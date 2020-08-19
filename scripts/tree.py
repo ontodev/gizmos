@@ -116,6 +116,8 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     """Create a hiccup-style HTML vector for the given term."""
     if len(stanza) == 0:
         return set(), "Not found"
+
+    # Create the tree
     curies = set()
     tree = {}
     cur.execute(
@@ -176,6 +178,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         prefix, local = curie.split(":")
         ps.add(prefix)
 
+    # Get all labels
     labels = {}
     ids = "', '".join(curies)
     cur.execute(
@@ -192,15 +195,21 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         if key in labels:
             tree[key]["label"] = labels[key]
 
+    # Select the label used in tree as the primary label
+    # (shows same label everywhere if there are multiple labels)
+    selected_label = labels[term_id]
+
     label = term_id
     label_row = None
     for row in stanza:
         predicate = row["predicate"]
-        if predicate == "rdfs:label":
+        value = row["value"]
+        if predicate == "rdfs:label" and value == selected_label:
             label_row = row
-            label = label_row["value"]
+            label = value
             break
 
+    # Add annotations, etc. on right-hand side
     annotation_bnodes = set()
     for row in stanza:
         if row["predicate"] == "rdf:type" and row["object"] == "owl:Axiom":
@@ -247,6 +256,9 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         for row in s2[predicate]:
             if row == label_row:
                 continue
+            if predicate == "rdfs:subClassOf" and row["object"].startswith("_:"):
+                # TODO - render blank nodes properly
+                continue
             o = ["li", row2o(data, row)]
             for key, ann in annotations.items():
                 if row != ann["row"]:
@@ -270,7 +282,8 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
                 )
                 break
             os.append(o)
-        items.append(["li", p, ["ul"] + os])
+        if os:
+            items.append(["li", p, ["ul"] + os])
 
     hierarchy = term2tree(data, treename, term_id)
     h2 = ""  # term2tree(data, treename, term_id)
