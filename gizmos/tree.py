@@ -20,9 +20,7 @@ The term-curie must use a prefix from the 'prefixes' table.
 
 
 def main():
-    p = ArgumentParser(
-        "tree.py", description="create an HTML page to display an ontology term"
-    )
+    p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display")
     args = p.parse_args()
@@ -40,24 +38,12 @@ def curie2href(curie):
     return f"?id={curie}".replace("#", "%23")
 
 
-def iri2href(prefixes, iri):
-    return curie2href(iri2curie(prefixes, iri))
-
-
 def curie2iri(prefixes, curie):
     """Convert a CURIE to IRI"""
     for prefix, base in prefixes:
         if curie.startswith(prefix + ":"):
             return curie.replace(prefix + ":", base)
     raise Exception(f"No matching prefix for {curie}")
-
-
-def iri2curie(prefixes, iri):
-    """Convert an IRI to a CURIE"""
-    for prefix, base in prefixes:
-        if iri.startswith(base):
-            return iri.replace(base, prefix + ":")
-    raise Exception(f"No matching base for {iri}")
 
 
 def dict_factory(cursor, row):
@@ -68,7 +54,7 @@ def dict_factory(cursor, row):
     return d
 
 
-def term2tree(prefixes, data, treename, term_id):
+def term2tree(data, treename, term_id):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return ""
@@ -87,7 +73,7 @@ def term2tree(prefixes, data, treename, term_id):
         predicate = "rdfs:subClassOf"
         oc = child
         object_label = tree_label(data, treename, oc)
-        o = ["a", {"rev": predicate, "resource": curie2iri(prefixes, oc)}, object_label]
+        o = ["a", {"rev": predicate, "resource": oc}, object_label]
         attrs = {}
         if len(children) > max_children:
             attrs["style"] = "display: none"
@@ -112,14 +98,7 @@ def term2tree(prefixes, data, treename, term_id):
             predicate = "rdfs:subClassOf"
             oc = node
             object_label = tree_label(data, treename, node)
-            o = [
-                "a",
-                {
-                    "rel": curie2iri(prefixes, predicate),
-                    "resource": curie2iri(prefixes, oc),
-                },
-                object_label,
-            ]
+            o = ["a", {"rel": predicate, "resource": oc}, object_label]
             hierarchy = ["ul", ["li", o, hierarchy]]
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
@@ -276,7 +255,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
             if predicate == "rdfs:subClassOf" and row["object"].startswith("_:"):
                 # TODO - render blank nodes properly
                 continue
-            o = ["li", row2o(prefixes, data, row)]
+            o = ["li", row2o(data, row)]
             for key, ann in annotations.items():
                 if row != ann["row"]:
                     continue
@@ -286,13 +265,13 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
                 o.append(
                     [
                         "small",
-                        {"resource": curie2iri(prefixes, key)},
+                        {"resource": key},
                         [
                             "div",
                             {"hidden": "true"},
-                            row2o(prefixes, data, ann["source"]),
-                            row2o(prefixes, data, ann["property"]),
-                            row2o(prefixes, data, ann["target"]),
+                            row2o(data, ann["source"]),
+                            row2o(data, ann["property"]),
+                            row2o(data, ann["target"]),
                         ],
                         ul,
                     ]
@@ -302,12 +281,12 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         if os:
             items.append(["li", p, ["ul"] + os])
 
-    hierarchy = term2tree(prefixes, data, treename, term_id)
+    hierarchy = term2tree(data, treename, term_id)
     h2 = ""  # term2tree(data, treename, term_id)
 
     term = [
         "div",
-        {"resource": curie2iri(prefixes, subject)},
+        {"resource": subject},
         ["h2", subject_label],
         ["a", {"href": si}, si],
         ["div", {"class": "row"}, hierarchy, h2, items],
@@ -351,7 +330,14 @@ def terms2rdfa(cur, treename, term_ids):
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
         ["title", data["labels"].get(term_ids[0], treename + " Browser")],
     ]
-    body = ["body", {"class": "container"}] + terms
+
+    # Create the prefix element
+    pref_strs = []
+    for prefix, base in all_prefixes:
+        pref_strs.append(f"{prefix}: {base}")
+    pref_str = "\n".join(pref_strs)
+
+    body = ["body", {"class": "container", "prefix": pref_str}] + terms
     body.append(
         [
             "script",
@@ -406,7 +392,7 @@ def render(prefixes, element, depth=0):
     if len(element) > 0 and isinstance(element[0], dict):
         attrs = element.pop(0)
         if tag == "a" and "href" not in attrs and "resource" in attrs:
-            attrs["href"] = iri2href(prefixes, attrs["resource"])
+            attrs["href"] = curie2href(attrs["resource"])
         for key, value in attrs.items():
             if key in ["checked"]:
                 if value:
@@ -435,23 +421,20 @@ def render(prefixes, element, depth=0):
     return output
 
 
-def row2o(prefixes, data, row):
+def row2o(data, row):
     """Convert an object from a sqlite query to hiccup-style HTML."""
     predicate = row["predicate"]
     obj = row["object"]
     if isinstance(obj, str):
         if obj.startswith("<"):
             iri = obj[1:-1]
-            return ["a", {"rel": curie2iri(prefixes, predicate), "href": iri}, iri]
+            return ["a", {"rel": predicate, "href": iri}, iri]
         elif obj.startswith("_:"):
-            return ["span", {"property": curie2iri(prefixes, predicate)}, obj]
+            return ["span", {"property": predicate}, obj]
         else:
             return [
                 "a",
-                {
-                    "rel": curie2iri(prefixes, predicate),
-                    "resource": curie2iri(prefixes, obj),
-                },
+                {"rel": predicate, "resource": obj},
                 data["labels"].get(obj, obj),
             ]
     # TODO: OWL expressions
@@ -459,7 +442,7 @@ def row2o(prefixes, data, row):
     # TODO: datatypes
     # TODO: languages
     elif row["value"]:
-        return ["span", {"property": curie2iri(prefixes, predicate)}, row["value"]]
+        return ["span", {"property": predicate}, row["value"]]
 
 
 def row2po(prefixes, data, row):
@@ -467,7 +450,7 @@ def row2po(prefixes, data, row):
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
     p = ["a", {"href": curie2href(predicate)}, predicate_label]
-    o = row2o(prefixes, data, row)
+    o = row2o(data, row)
     return [p, o]
 
 
