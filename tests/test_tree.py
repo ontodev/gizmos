@@ -57,30 +57,30 @@ def test_tree():
     success = True
     expected_graph = Graph()
     expected_graph.parse("tests/resources/obi.ttl", format="turtle")
-    subject = URIRef("http://purl.obolibrary.org/obo/OBI_0100046")
 
     # Check that no triples are missing
-    for p, o in expected_graph.predicate_objects(subject):
-        if (subject, URIRef(p), Literal(str(o))) not in graph and (
-            subject,
-            URIRef(p),
-            URIRef(o),
-        ) not in graph:
-            success = False
-            print(f"Missing {p}: {o}")
+    subjects = expected_graph.subjects()
+    for subject in subjects:
+        for p, o in expected_graph.predicate_objects(subject):
+            if (subject, URIRef(p), Literal(str(o))) not in graph and (
+                subject,
+                URIRef(p),
+                URIRef(o),
+            ) not in graph:
+                success = False
+                print(f"Missing {p}: {o}")
 
     # Check that no triples have been added
-    for p, o in graph.predicate_objects(subject):
-        if str(p) == "http://www.w3.org/2000/01/rdf-schema#subClassOf":
-            # Skip subclasses since they are built from the entire tree
-            continue
-        if (subject, URIRef(p), Literal(str(o))) not in expected_graph and (
-            subject,
-            URIRef(p),
-            URIRef(o),
-        ) not in expected_graph:
-            success = False
-            print(f"Added {p}: {o}")
+    subjects = graph.subjects()
+    for subject in subjects:
+        for p, o in graph.predicate_objects(subject):
+            if (subject, URIRef(p), Literal(str(o))) not in expected_graph and (
+                subject,
+                URIRef(p),
+                URIRef(o),
+            ) not in expected_graph:
+                success = False
+                print(f"Added {subject} {p} {o}")
 
     if not success:
         sys.exit(1)
