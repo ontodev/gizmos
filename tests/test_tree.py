@@ -56,7 +56,7 @@ def test_tree():
     # Read in the expected output to compare
     success = True
     expected_graph = Graph()
-    expected_graph.parse("tests/resources/obi.ttl", format="turtle")
+    expected_graph.parse("tests/resources/obi-tree.ttl", format="turtle")
     subject = URIRef("http://purl.obolibrary.org/obo/OBI_0100046")
 
     # Check that no triples are missing
