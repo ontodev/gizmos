@@ -64,7 +64,7 @@ def main():
     if args.terms:
         with open(args.terms, "r") as f:
             terms_from_file = [x.strip() for x in f.readlines()]
-            terms.exend(terms_from_file)
+            terms.extend(terms_from_file)
 
     if not terms:
         logging.critical("One or more term(s) must be specified with --term or --terms")
