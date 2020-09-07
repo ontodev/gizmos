@@ -56,7 +56,10 @@ def main():
         help="If provided, do not create any rdfs:subClassOf statements",
     )
     args = p.parse_args()
+    sys.stdout.write(extract(args))
 
+
+def extract(args):
     # Get required terms
     terms = []
     if args.term:
@@ -80,9 +83,9 @@ def main():
             annotations = [x.strip() for x in f.readlines()]
 
     ttl = "\n".join(
-        extract(args.database, terms, annotations, no_hierarchy=args.no_hierarchy)
+        extract_terms(args.database, terms, annotations, no_hierarchy=args.no_hierarchy)
     )
-    sys.stdout.write(ttl)
+    return ttl
 
 
 def add_annotations(cur, annotations=None):
@@ -177,7 +180,7 @@ def dict_factory(cursor, row):
     return d
 
 
-def extract(database, terms, annotations, no_hierarchy=False):
+def extract_terms(database, terms, annotations, no_hierarchy=False):
     """Extract terms from the ontology database and return the module as lines of Turtle."""
     # Create a new table (extract) and copy the triples we care about
     # Then write the triples from that table to the output file
