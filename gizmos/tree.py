@@ -153,7 +153,6 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
       SELECT * FROM ancestors"""
     )
     for row in cur.fetchall():
-        # logger.debug("Got child: {} with parent: {}".format(row["child"], row["parent"]))
         # Consider the parent column of the current row:
         parent = row["parent"]
         if not parent:
@@ -543,7 +542,7 @@ def row2o(stanza, data, uber_row):
         # predicate 'owl:onProperty' and its object will represent the property being restricted,
         # which can be either a blank or a non-blank node. The third row will have either the
         # predicate 'owl:allValuesFrom' or the predicate 'owl:someValuesFrom', which we render,
-        # respectively, as 'all' and 'some'. The object of this row is what the property being
+        # respectively, as 'only' and 'some'. The object of this row is what the property being
         # restricted is being restricted in relation to.
         # E.g., in the restriction: "'has grain' some 'sodium phosphate'", 'has grain' is extracted
         # via the object of the second row, while 'some' and 'sodium phosphate' are
@@ -579,7 +578,7 @@ def row2o(stanza, data, uber_row):
         if target_pred == "owl:someValuesFrom":
             operator = "some"
         elif target_pred == "owl:allValuesFrom":
-            operator = "all"
+            operator = "only"
         else:
             logger.error("Unrecognised predicate: {}".format(target_pred))
             return ["div"]
