@@ -94,7 +94,7 @@ def term2tree(data, treename, term_id):
     children = ["ul", {"id": "children"}] + children
     if len(children) == 0:
         children = ""
-
+    # <a about="parent_id" rev="rdfs:subClassOf" resource="term_id" href="?id=term_id">entity</a>
     hierarchy = ["ul", ["li", tree_label(data, treename, term_id), children]]
     i = 0
     parents = tree["parents"]
@@ -102,17 +102,23 @@ def term2tree(data, treename, term_id):
         node = parents[0]
         while node and i < 100:
             i += 1
-            predicate = "rdfs:subClassOf"
             oc = node
             object_label = tree_label(data, treename, node)
-            o = ["a", {"rel": predicate, "resource": oc}, object_label]
-            hierarchy = ["ul", ["li", o, hierarchy]]
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
+                # No parent
+                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
+                # Parent is the same
+                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                hierarchy = ["ul", ["li", o, hierarchy]]
                 break
+            o = ["a", {"about": parent, "rev": "rdfs:subClassOf", "resource": oc,
+                       "href": curie2href(term_id)}, object_label]
+            hierarchy = ["ul", ["li", o, hierarchy]]
             node = parent
 
     hierarchy.insert(1, {"id": "hierarchy", "class": "col-md"})
