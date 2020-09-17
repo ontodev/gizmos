@@ -2,6 +2,8 @@ import os
 import sqlite3
 import sys
 
+import gizmos.hiccup as gh
+
 from argparse import ArgumentParser
 from collections import defaultdict
 
@@ -31,11 +33,6 @@ def main():
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(terms2rdfa(cur, treename, [args.term]))
-
-
-def curie2href(curie):
-    """Convert a CURIE to an HREF"""
-    return f"?id={curie}".replace("#", "%23")
 
 
 def curie2iri(prefixes, curie):
@@ -100,17 +97,17 @@ def term2tree(data, treename, term_id):
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
-                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": gh.curie2href(term_id)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
                 # Parent is the same
-                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": gh.curie2href(term_id)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             o = ["a", {"about": parent, "rev": "rdfs:subClassOf", "resource": oc,
-                       "href": curie2href(term_id)}, object_label]
+                       "href": gh.curie2href(term_id)}, object_label]
             hierarchy = ["ul", ["li", o, hierarchy]]
             node = parent
 
@@ -255,7 +252,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     pcs = list(s2.keys())
     pcs.sort()
     for predicate in pcs:
-        p = ["a", {"href": curie2href(predicate)}, labels.get(predicate, predicate)]
+        p = ["a", {"href": gh.curie2href(predicate)}, labels.get(predicate, predicate)]
         os = []
         for row in s2[predicate]:
             if predicate == "rdfs:subClassOf" and row["object"].startswith("_:"):
@@ -267,7 +264,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
                     continue
                 ul = ["ul"]
                 for a in ann["rows"]:
-                    ul.append(["li"] + row2po(prefixes, data, a))
+                    ul.append(["li"] + row2po(data, a))
                 o.append(
                     [
                         "small",
@@ -371,7 +368,7 @@ def terms2rdfa(cur, treename, term_ids):
         ]
     )
     html = ["html", head, body]
-    output = "Content-Type: text/html\n\n" + render(all_prefixes, html)
+    output = "Content-Type: text/html\n\n" + gh.render(all_prefixes, html)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
@@ -381,50 +378,6 @@ def tree_label(data, treename, s):
     """Retrieve the label of a term."""
     node = data[treename][s]
     return node.get("label", s)
-
-
-def render(prefixes, element, depth=0):
-    """Render hiccup-style HTML vector as HTML."""
-    indent = "  " * depth
-    if not isinstance(element, list):
-        raise Exception(f"Element is not a list: {element}")
-    if len(element) == 0:
-        raise Exception(f"Element is an empty list")
-    tag = element.pop(0)
-    if not isinstance(tag, str):
-        raise Exception(f"Tag '{tag}' is not a string in '{element}'")
-    output = f"{indent}<{tag}"
-
-    if len(element) > 0 and isinstance(element[0], dict):
-        attrs = element.pop(0)
-        if tag == "a" and "href" not in attrs and "resource" in attrs:
-            attrs["href"] = curie2href(attrs["resource"])
-        for key, value in attrs.items():
-            if key in ["checked"]:
-                if value:
-                    output += f" {key}"
-            else:
-                output += f' {key}="{value}"'
-
-    if tag in ["meta", "link"]:
-        output += "/>"
-        return output
-    output += ">"
-    spacing = ""
-    if len(element) > 0:
-        for child in element:
-            if isinstance(child, str):
-                output += child
-            elif isinstance(child, list):
-                try:
-                    output += "\n" + render(prefixes, child, depth=depth + 1)
-                    spacing = f"\n{indent}"
-                except Exception as e:
-                    raise Exception(f"Bad child in '{element}'", e)
-            else:
-                raise Exception(f"Bad type for child '{child}' in '{element}'")
-    output += f"{spacing}</{tag}>"
-    return output
 
 
 def row2o(data, row):
@@ -451,11 +404,11 @@ def row2o(data, row):
         return ["span", {"property": predicate}, row["value"]]
 
 
-def row2po(prefixes, data, row):
+def row2po(data, row):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2href(predicate)}, predicate_label]
+    p = ["a", {"href": gh.curie2href(predicate)}, predicate_label]
     o = row2o(data, row)
     return [p, o]
 
