@@ -2,10 +2,9 @@ import os
 import sqlite3
 import sys
 
-import gizmos.hiccup as gh
-
 from argparse import ArgumentParser
 from collections import defaultdict
+from gizmos.hiccup import curie2href, render
 
 
 """
@@ -97,17 +96,17 @@ def term2tree(data, treename, term_id):
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
-                o = ["a", {"resource": oc, "href": gh.curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
                 # Parent is the same
-                o = ["a", {"resource": oc, "href": gh.curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             o = ["a", {"about": parent, "rev": "rdfs:subClassOf", "resource": oc,
-                       "href": gh.curie2href(term_id)}, object_label]
+                       "href": curie2href(term_id)}, object_label]
             hierarchy = ["ul", ["li", o, hierarchy]]
             node = parent
 
@@ -252,7 +251,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     pcs = list(s2.keys())
     pcs.sort()
     for predicate in pcs:
-        p = ["a", {"href": gh.curie2href(predicate)}, labels.get(predicate, predicate)]
+        p = ["a", {"href": curie2href(predicate)}, labels.get(predicate, predicate)]
         os = []
         for row in s2[predicate]:
             if predicate == "rdfs:subClassOf" and row["object"].startswith("_:"):
@@ -368,7 +367,7 @@ def terms2rdfa(cur, treename, term_ids):
         ]
     )
     html = ["html", head, body]
-    output = "Content-Type: text/html\n\n" + gh.render(all_prefixes, html)
+    output = "Content-Type: text/html\n\n" + render(all_prefixes, html)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
@@ -408,7 +407,7 @@ def row2po(data, row):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": gh.curie2href(predicate)}, predicate_label]
+    p = ["a", {"href": curie2href(predicate)}, predicate_label]
     o = row2o(data, row)
     return [p, o]
 
