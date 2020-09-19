@@ -4,6 +4,7 @@ import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
+from gizmos.hiccup import curie2href, render
 
 
 """
@@ -31,11 +32,6 @@ def main():
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(terms2rdfa(cur, treename, [args.term]))
-
-
-def curie2href(curie):
-    """Convert a CURIE to an HREF"""
-    return f"?id={curie}".replace("#", "%23")
 
 
 def curie2iri(prefixes, curie):
@@ -267,7 +263,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
                     continue
                 ul = ["ul"]
                 for a in ann["rows"]:
-                    ul.append(["li"] + row2po(prefixes, data, a))
+                    ul.append(["li"] + row2po(data, a))
                 o.append(
                     [
                         "small",
@@ -383,50 +379,6 @@ def tree_label(data, treename, s):
     return node.get("label", s)
 
 
-def render(prefixes, element, depth=0):
-    """Render hiccup-style HTML vector as HTML."""
-    indent = "  " * depth
-    if not isinstance(element, list):
-        raise Exception(f"Element is not a list: {element}")
-    if len(element) == 0:
-        raise Exception(f"Element is an empty list")
-    tag = element.pop(0)
-    if not isinstance(tag, str):
-        raise Exception(f"Tag '{tag}' is not a string in '{element}'")
-    output = f"{indent}<{tag}"
-
-    if len(element) > 0 and isinstance(element[0], dict):
-        attrs = element.pop(0)
-        if tag == "a" and "href" not in attrs and "resource" in attrs:
-            attrs["href"] = curie2href(attrs["resource"])
-        for key, value in attrs.items():
-            if key in ["checked"]:
-                if value:
-                    output += f" {key}"
-            else:
-                output += f' {key}="{value}"'
-
-    if tag in ["meta", "link"]:
-        output += "/>"
-        return output
-    output += ">"
-    spacing = ""
-    if len(element) > 0:
-        for child in element:
-            if isinstance(child, str):
-                output += child
-            elif isinstance(child, list):
-                try:
-                    output += "\n" + render(prefixes, child, depth=depth + 1)
-                    spacing = f"\n{indent}"
-                except Exception as e:
-                    raise Exception(f"Bad child in '{element}'", e)
-            else:
-                raise Exception(f"Bad type for child '{child}' in '{element}'")
-    output += f"{spacing}</{tag}>"
-    return output
-
-
 def row2o(data, row):
     """Convert an object from a sqlite query to hiccup-style HTML."""
     predicate = row["predicate"]
@@ -451,7 +403,7 @@ def row2o(data, row):
         return ["span", {"property": predicate}, row["value"]]
 
 
-def row2po(prefixes, data, row):
+def row2po(data, row):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
