@@ -1,0 +1,47 @@
+@prefix bfo: <http://purl.obolibrary.org/obo/BFO_> .
+@prefix chebi: <http://purl.obolibrary.org/obo/CHEBI_> .
+@prefix iao: <http://purl.obolibrary.org/obo/IAO_> .
+@prefix obi: <http://purl.obolibrary.org/obo/OBI_> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+obi:0100046 a owl:Class ;
+    rdfs:label "phosphate buffered saline solution" ;
+    iao:0000111 "phosphate buffered saline solution" ;
+    iao:0000112 "PMID: 16279733.Dent Mater J. 2005 Sep;24(3):414-21.PBS buffer solutions with different pH values can change porosity of DNA-chitosan complexes." ;
+    iao:0000114 iao:0000122 ;
+    iao:0000115 "Phosphate buffered saline (abbreviated PBS) is a buffer solution commonly used in biochemistry. It is a salty solution containing sodium chloride, sodium phosphate and in some preparations potassium chloride and potassium phosphate. The buffer helps to maintain a constant pH. The concentration usually matches the human body (isotonic)." ;
+    iao:0000117 "PERSON: Melanie Courtot",
+        "PERSON: Philippe Rocca-Serra",
+        "PERSON: Tina Boussard" ;
+    iao:0000118 "PBS buffer" ;
+    iao:0000119 "WEB: http://en.wikipedia.org/wiki/Phosphate_buffered_saline" ;
+    rdfs:subClassOf [ a owl:Restriction ;
+            owl:onProperty bfo:0000051 ;
+            owl:someValuesFrom [ a owl:Class ;
+                    owl:intersectionOf ( obi:0000576 [ a owl:Restriction ;
+                                owl:allValuesFrom chebi:37586 ;
+                                owl:onProperty obi:0000643 ] ) ] ],
+        [ a owl:Restriction ;
+            owl:onProperty bfo:0000051 ;
+            owl:someValuesFrom [ a owl:Class ;
+                    owl:intersectionOf ( obi:0000576 [ a owl:Restriction ;
+                                owl:allValuesFrom chebi:26710 ;
+                                owl:onProperty obi:0000643 ] ) ] ],
+        [ a owl:Restriction ;
+            owl:onProperty obo:RO_0000087 ;
+            owl:someValuesFrom obi:0302731 ],
+        obi:0302729 .
+
+bfo:0000001 rdfs:subClassOf owl:Thing .
+
+bfo:0000002 rdfs:subClassOf bfo:0000001 .
+
+bfo:0000004 rdfs:subClassOf bfo:0000002 .
+
+bfo:0000040 rdfs:subClassOf bfo:0000004 .
+
+obi:0302729 rdfs:subClassOf bfo:0000040 .
+

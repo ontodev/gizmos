@@ -20,7 +20,7 @@ and include 'statements' and 'prefixes' tables.
 The term-curie must use a prefix from the 'prefixes' table.
 """
 
-logger = logging.getLogger("main")
+LOGGER = logging.getLogger("main")
 logging.basicConfig(
     level=logging.INFO, format="%(levelname)s - %(asctime)s - %(name)s - %(message)s"
 )
@@ -116,8 +116,16 @@ def term2tree(data, treename, term_id):
                 o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
-            o = ["a", {"about": parent, "rev": "rdfs:subClassOf", "resource": oc,
-                       "href": curie2href(term_id)}, object_label]
+            o = [
+                "a",
+                {
+                    "about": parent,
+                    "rev": "rdfs:subClassOf",
+                    "resource": oc,
+                    "href": curie2href(term_id),
+                },
+                object_label,
+            ]
             hierarchy = ["ul", ["li", o, hierarchy]]
             node = parent
 
@@ -479,8 +487,8 @@ def render(prefixes, element, depth=0):
     return output
 
 
-def row2o(stanza, data, uber_row):
-    """Given a stanza, a map (`data`) with entries for the tree structure of the stanza and for all
+def row2o(_stanza, _data, _uber_row):
+    """Given a stanza, a map (`_data`) with entries for the tree structure of the stanza and for all
     of the labels in it, and a row in the stanza, convert the row to hiccup-style HTML."""
 
     def renderNonBlank(given_row):
@@ -488,7 +496,7 @@ def row2o(stanza, data, uber_row):
         return [
             "a",
             {"rel": given_row["predicate"], "resource": given_row["object"]},
-            data["labels"].get(given_row["object"], given_row["object"]),
+            _data["labels"].get(given_row["object"], given_row["object"]),
         ]
 
     def renderLiteral(given_row):
@@ -499,10 +507,10 @@ def row2o(stanza, data, uber_row):
 
     def getOwlOperands(given_row):
         "Extract all of the operands pointed to by the given row and return them as a list"
-        logger.debug("Finding operands for row with predicate: {}".format(given_row["predicate"]))
+        LOGGER.debug("Finding operands for row with predicate: {}".format(given_row["predicate"]))
 
         if not given_row["object"].startswith("_:"):
-            logger.debug("Found non-blank operand: {}".format(given_row["object"]))
+            LOGGER.debug("Found non-blank operand: {}".format(given_row["object"]))
             return [renderNonBlank(given_row)]
 
         # Find the rows whose subject matches the object from the given row. In general there will
@@ -510,101 +518,45 @@ def row2o(stanza, data, uber_row):
         # to render either a restriction or a class, as the case may be. Otherwise if we find a row
         # with an rdf:first predicate, then if it is a blank node, it points to further operands,
         # which we recursively chase and render, and similarly if the predicate is rdf:rest (which
-        # will always have a blank object). If the predicate is rdf:first but the object is not
-        # blank, then we can render it directly.
-        inner_rows = [row for row in stanza if row["subject"] == given_row["object"]]
+        # will always have a blank (or nil) object). If the predicate is rdf:first but the object is
+        # not blank, then we can render it directly.
+        inner_rows = [row for row in _stanza if row["subject"] == given_row["object"]]
+
         operands = []
         for inner_row in inner_rows:
             inner_subj = inner_row["subject"]
             inner_pred = inner_row["predicate"]
             inner_obj = inner_row["object"]
-            logger.debug(f"Found row with <s,p,o> = <{inner_subj}, {inner_pred}, {inner_obj}>")
+            LOGGER.debug(f"Found row with <s,p,o> = <{inner_subj}, {inner_pred}, {inner_obj}>")
 
             if inner_pred == "rdf:type":
                 if inner_obj == "owl:Restriction":
                     operands.append(renderOwlRestriction(inner_rows))
                     break
                 elif inner_obj == "owl:Class":
-                    operands.append(renderOwlClassExpression(given_row))
+                    operands.append(renderOwlClassExpression(inner_rows))
                     break
-            elif inner_pred == "rdf:rest" and inner_obj != "rdf:nil":
-                operands.append(["span", {"rel": inner_pred}] + getOwlOperands(inner_row))
-                logger.debug(f"Returned from recursing on {inner_pred}")
+            elif inner_pred == "rdf:rest":
+                if inner_obj != "rdf:nil":
+                    operands.append(["span", {"rel": inner_pred}] + getOwlOperands(inner_row))
+                else:
+                    operands.append(["span", {"rel": inner_pred, "resource": "rdf:nil"}])
+                LOGGER.debug(f"Returned from recursing on {inner_pred}")
             elif inner_pred == "rdf:first":
                 if inner_obj.startswith("_:"):
-                    logger.debug(f"{inner_pred} points to a blank node, following the trail")
+                    LOGGER.debug(f"{inner_pred} points to a blank node, following the trail")
                     operands.append(["span", {"rel": inner_pred}] + getOwlOperands(inner_row))
-                    logger.debug(f"Returned from recursing on {inner_pred}")
+                    LOGGER.debug(f"Returned from recursing on {inner_pred}")
                 else:
-                    logger.debug(f"Rendering non-blank object with predicate: {inner_pred}")
+                    LOGGER.debug(f"Rendering non-blank object with predicate: {inner_pred}")
                     operands.append(renderNonBlank(inner_row))
 
         return operands
 
-    def renderOwlRestriction(given_rows):
-        "Renders the OWL restriction described by the given rows"
-        # OWL restrictions are represented using three rows. The first will have the predicate
-        # 'rdf:type' and its object should always be 'owl:Restriction'. The second row will have the
-        # predicate 'owl:onProperty' and its object will represent the property being restricted,
-        # which can be either a blank or a non-blank node. The third row will have either the
-        # predicate 'owl:allValuesFrom' or the predicate 'owl:someValuesFrom', which we render,
-        # respectively, as 'only' and 'some'. The object of this row is what the property being
-        # restricted is being restricted in relation to.
-        # E.g., in the restriction: "'has grain' some 'sodium phosphate'", 'has grain' is extracted
-        # via the object of the second row, while 'some' and 'sodium phosphate' are
-        # extracted via the predicate and object, respectively, of the third row.
-
-        rdf_type_row = [row for row in given_rows if row["predicate"] == "rdf:type"]
-        property_row = [row for row in given_rows if row["predicate"] == "owl:onProperty"]
-        target_row = [
-            row for row in given_rows if row["predicate"] not in ("rdf:type", "owl:onProperty")
-        ]
-        for rowset in [rdf_type_row, property_row, target_row]:
-            if len(rowset) != 1:
-                logger.error(f"Rows: {given_rows} do not represent a valid restriction")
-                return ["div"]
-
-        property_row = property_row[0]
-        target_row = target_row[0]
-        rdf_type_row = rdf_type_row[0]
-        if rdf_type_row["object"] != "owl:Restriction":
-            logger.error(
-                "Unexpected rdf:type: '{}' found in OWL restriction".format(rdf_type_row["object"])
-            )
-            return ["div"]
-
-        target_pred = target_row["predicate"]
-        target_obj = target_row["object"]
-        logger.debug("Rendering OWL restriction {} for object {}".format(target_pred, target_obj))
-        if target_obj.startswith("_:"):
-            target_div = renderOwlClassExpression(target_row)
-        else:
-            target_div = renderNonBlank(target_row)
-
-        if target_pred == "owl:someValuesFrom":
-            operator = "some"
-        elif target_pred == "owl:allValuesFrom":
-            operator = "only"
-        else:
-            logger.error("Unrecognised predicate: {}".format(target_pred))
-            return ["div"]
-
-        return [
-            "span",
-            [
-                "a",
-                {"rel": property_row["predicate"], "resource": property_row["object"]},
-                data["labels"].get(property_row["object"], property_row["object"]),
-            ],
-            " ",
-            operator,
-            target_div,
-        ]
-
     def renderNaryRelation(class_pred, operands):
         "Render an n-ary relation using the given predicate and operands"
         if len(operands) < 2:
-            logger.error(
+            LOGGER.error(
                 f"Something is wrong. Wrong number of operands to '{class_pred}': {operands}"
             )
             return ["div"]
@@ -616,11 +568,10 @@ def row2o(stanza, data, uber_row):
         elif class_pred == "owl:oneOf":
             operator = "one of"
         else:
-            logger.error(f"Unrecognized predicate for n-ary relation: {class_pred}")
+            LOGGER.error(f"Unrecognized predicate for n-ary relation: {class_pred}")
             return ["div"]
 
-        resource = OWL_PREFIX.format(class_pred.replace("owl:", ""))
-        owl_div = ["span", {"rel": class_pred, "resource": resource}, " ", "("]
+        owl_div = ["span", {"rel": class_pred}, " ", "("]
         for idx, operand in enumerate(operands):
             owl_div.append(operand)
             if (idx + 1) < len(operands):
@@ -631,7 +582,7 @@ def row2o(stanza, data, uber_row):
     def renderUnaryRelation(class_pred, operands):
         "Render a unary relation using the given predicate and operands"
         if len(operands) != 1:
-            logger.error(
+            LOGGER.error(
                 f"Something is wrong. Wrong number of operands to '{class_pred}': {operands}"
             )
             return ["div"]
@@ -639,118 +590,174 @@ def row2o(stanza, data, uber_row):
         if class_pred == "owl:complementOf":
             operator = "not"
         else:
-            logger.error(f"Unrecognized predicate for unary relation: {class_pred}")
+            LOGGER.error(f"Unrecognized predicate for unary relation: {class_pred}")
             return ["div"]
 
-        resource = OWL_PREFIX.format(class_pred.replace("owl:", ""))
         operand = operands[0]
-        owl_div = ["span", {"rel": class_pred, "resource": resource}, operator, " ", operand]
+        owl_div = ["span", {"rel": class_pred}, operator, " ", operand]
         return owl_div
 
-    def renderOwlClassExpression(given_row):
-        "Render the OWL class expression pointed to by the given row"
+    def renderOwlRestriction(given_rows):
+        "Renders the OWL restriction described by the given rows"
+        # OWL restrictions are represented using three rows. The first will have the predicate
+        # 'rdf:type' and its object should always be 'owl:Restriction'. The second row will have the
+        # predicate 'owl:onProperty' and its object will represent the property being restricted,
+        # which can be either a blank or a non-blank node. The third row will have either the
+        # predicate 'owl:allValuesFrom' or the predicate 'owl:someValuesFrom', which we render,
+        # respectively, as 'only' and 'some'. The object of this row is what the property being
+        # restricted is being restricted in relation to.
+        # E.g., in the restriction: "'has grain' some 'sodium phosphate'": 'has grain' is extracted
+        # via the object of the second row, while 'some' and 'sodium phosphate' are
+        # extracted via the predicate and object, respectively, of the third row.
+        rdf_type_row = [row for row in given_rows if row["predicate"] == "rdf:type"]
+        property_row = [row for row in given_rows if row["predicate"] == "owl:onProperty"]
+        target_row = [
+            row for row in given_rows if row["predicate"] not in ("rdf:type", "owl:onProperty")
+        ]
+        for rowset in [rdf_type_row, property_row, target_row]:
+            if len(rowset) != 1:
+                LOGGER.error(f"Rows: {given_rows} do not represent a valid restriction")
+                return ["div"]
 
+        property_row = property_row[0]
+        target_row = target_row[0]
+        rdf_type_row = rdf_type_row[0]
+        if rdf_type_row["object"] != "owl:Restriction":
+            LOGGER.error(
+                "Unexpected rdf:type: '{}' found in OWL restriction".format(rdf_type_row["object"])
+            )
+            return ["div"]
+
+        target_pred = target_row["predicate"]
+        target_obj = target_row["object"]
+        LOGGER.debug("Rendering OWL restriction {} for object {}".format(target_pred, target_obj))
+        if target_obj.startswith("_:"):
+            inner_rows = [row for row in _stanza if row["subject"] == target_obj]
+            target_link = renderOwlClassExpression(inner_rows, target_pred)
+        else:
+            target_link = renderNonBlank(target_row)
+
+        if target_pred == "owl:someValuesFrom":
+            operator = "some"
+        elif target_pred == "owl:allValuesFrom":
+            operator = "only"
+        else:
+            LOGGER.error("Unrecognised predicate: {}".format(target_pred))
+            return ["div"]
+
+        return [
+            "span",
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]}],
+            [
+                "a",
+                {"rel": property_row["predicate"], "resource": property_row["object"]},
+                _data["labels"].get(property_row["object"], property_row["object"]),
+            ],
+            " ",
+            operator,
+            target_link,
+        ]
+
+    def renderOwlClassExpression(given_rows, rel=None):
+        "Render the OWL class expression pointed to by the given row"
         # The sub-stanza corresponding to an owl:Class should have two rows. One of these points
         # to the actual class referred to (either a named class or a blank node). From this row we
         # get the subject, predicate, and object to render. The second row will have the object
         # type, which we expect to be 'owl:Class'.
-        logger.debug("Fetching rows with subject: {}".format(given_row["object"]))
-        rows = [row for row in stanza if row["subject"] == given_row["object"]]
-        if len(rows) != 2:
-            logger.error(
-                "Got an unexpected number of object rows: {}; returning empty div".format(len(rows))
-            )
-            return ["div"]
+        rdf_type_row = [row for row in given_rows if row["predicate"] == "rdf:type"]
+        class_row = [row for row in given_rows if row["predicate"].startswith("owl:")]
+        LOGGER.debug(f"Found rows: {rdf_type_row}, {class_row}")
 
-        class_type = class_row = class_subj = class_pred = class_obj = None
-        for row in rows:
-            logger.debug(
-                "Found triple: <s,p,o> = <{}, {}, {}>.".format(
-                    row["subject"], row["predicate"], row["object"]
+        for rowset in [rdf_type_row, class_row]:
+            if len(rowset) != 1:
+                LOGGER.error(
+                    f"Rows: [{rdf_type_row}, {class_row}] do not represent a valid restriction"
                 )
-            )
-            if row["predicate"] == "rdf:type":
-                class_type = row["object"]
-                if class_type != "owl:Class":
-                    logger.error(f"Got unexpected type for class object: {class_type}")
-                    return ["div"]
-            elif row["predicate"].startswith("owl:"):
-                class_row = row
-                class_subj = class_row["subject"]
-                class_pred = class_row["predicate"]
-                class_obj = class_row["object"]
-            else:
-                logger.error("Unexpected predicate: {}".format(row["predicate"]))
                 return ["div"]
+
+        rdf_type_row = rdf_type_row[0]
+        class_row = class_row[0]
+        class_subj = class_row["subject"]
+        class_pred = class_row["predicate"]
+        class_obj = class_row["object"]
 
         # All blank class expressions will have operands, which we retrieve here:
         operands = getOwlOperands(class_row)
 
-        logger.debug(f"Rendering <s,p,o> = <{class_subj}, {class_pred}, {class_obj}>")
+        hiccup = [
+            "span",
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]}],
+        ]
+
+        # If `rel` is given, insert the attribute into the second position of the hiccup:
+        if rel:
+            hiccup = hiccup[:1] + [{"rel": rel}] + hiccup[1:]
+
+        LOGGER.debug(f"Rendering <s,p,o> = <{class_subj}, {class_pred}, {class_obj}>")
         if class_pred in ["owl:intersectionOf", "owl:unionOf", "owl:oneOf"]:
-            return renderNaryRelation(class_pred, operands)
+            hiccup.append(renderNaryRelation(class_pred, operands))
         elif class_pred == "owl:complementOf":
-            return renderUnaryRelation(class_pred, operands)
+            hiccup.append(renderUnaryRelation(class_pred, operands))
         elif class_obj.startswith("<"):
-            return renderLiteral(class_row)
+            hiccup.append(renderLiteral(class_row))
         else:
-            logger.warning(
+            LOGGER.warning(
                 f"Rendering for <s,p,o> = <{class_subj}, {class_pred}, {class_obj}> not implemented"
             )
-            return [
-                "a",
-                {"rel": class_pred, "resource": class_obj},
-                data["labels"].get(class_obj, class_obj),
-            ]
+            hiccup.append(["a", {"rel": class_pred}, _data["labels"].get(class_obj, class_obj)])
 
-    subj = uber_row["subject"]
-    predicate = uber_row["predicate"]
-    obj = uber_row["object"]
-    logger.debug(f"Called row2o on <s,p,o> = <{subj}, {predicate}, {obj}>")
+        return hiccup
+
+    uber_subj = _uber_row["subject"]
+    uber_pred = _uber_row["predicate"]
+    uber_obj = _uber_row["object"]
+    LOGGER.debug(f"Called row2o on <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>")
 
     # Here, we expect "outer rows" only, i.e., rows that have non-blank nodes as their subject. The
-    # inner functions above will handle rows with blank subjects. The check below shouldn't really
-    # be necessary, since the caller should not send us an input row with a blank subject, but we
-    # double-check anyway:
-    if subj.startswith("_:"):
-        logger.error("Received row with blank subject in row2o; returning empty div")
+    # inner functions above will handle rows with blank subjects. This means that the check below
+    # shouldn't really be necessary, since the caller should not send us an input row with a blank
+    # subject, but we double-check anyway:
+    if uber_subj.startswith("_:"):
+        LOGGER.error("Received row with blank subject in row2o; returning empty div")
         return ["div"]
 
-    if not isinstance(obj, str):
-        if uber_row["value"]:
-            logger.debug("Rendering non-string object with value: {}".format(uber_row["value"]))
-            return ["span", {"property": predicate}, uber_row["value"]]
+    if not isinstance(uber_obj, str):
+        if _uber_row["value"]:
+            LOGGER.debug("Rendering non-string object with value: {}".format(_uber_row["value"]))
+            return ["span", {"property": uber_pred}, _uber_row["value"]]
         else:
-            logger.error("Received non-string object with null value; returning empty div")
+            LOGGER.error("Received non-string object with null value; returning empty div")
             return ["div"]
-    elif obj.startswith("<"):
-        logger.debug(f"Rendering literal IRI: {obj}")
-        return renderLiteral(uber_row)
-    elif obj.startswith("_:"):
-        logger.debug(f"Rendering triple with blank object: <s,p,o> = <{subj}, {predicate}, {obj}>")
-        object_type = [
-            row for row in stanza if (row["subject"] == obj and row["predicate"] == "rdf:type")
-        ]
+    elif uber_obj.startswith("<"):
+        LOGGER.debug(f"Rendering literal IRI: {uber_obj}")
+        return renderLiteral(_uber_row)
+    elif uber_obj.startswith("_:"):
+        LOGGER.debug(
+            f"Rendering triple with blank object: <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>"
+        )
+        inner_rows = [row for row in _stanza if row["subject"] == uber_obj]
+        object_type = [row for row in inner_rows if row["predicate"] == "rdf:type"]
         if len(object_type) != 1:
-            logger.warning(f"Wrong number of object types found for {obj}: {object_type}")
+            LOGGER.warning(f"Wrong number of object types found for {uber_obj}: {object_type}")
         object_type = object_type[0]["object"] if len(object_type) > 0 else None
 
         if object_type == "owl:Class":
-            logger.debug(f"Rendering OWL class pointed to by {obj}")
-            return renderOwlClassExpression(uber_row)
+            LOGGER.debug(f"Rendering OWL class pointed to by {uber_obj}")
+            return ["span", {"rel": uber_pred}, renderOwlClassExpression(inner_rows)]
         elif object_type == "owl:Restriction":
-            logger.debug(f"Rendering OWL restriction pointed to by {obj}")
-            inner_rows = [row for row in stanza if row["subject"] == uber_row["object"]]
-            return renderOwlRestriction(inner_rows)
+            LOGGER.debug(f"Rendering OWL restriction pointed to by {uber_obj}")
+            return ["span", {"rel": uber_pred}, renderOwlRestriction(inner_rows)]
         else:
             if not object_type:
-                logger.warning(f"Could not determine object type for {predicate}")
+                LOGGER.warning(f"Could not determine object type for {uber_pred}")
             else:
-                logger.warning(f"Unrecognised object type: {object_type} for predicate {predicate}")
-            return ["span", {"property": predicate}, obj]
+                LOGGER.warning(f"Unrecognised object type: {object_type} for predicate {uber_pred}")
+            return ["span", {"property": uber_pred}, uber_obj]
     else:
-        logger.debug(f"Rendering non-blank triple: <s,p,o> = <{subj}, {predicate}, {obj}>")
-        return renderNonBlank(uber_row)
+        LOGGER.debug(
+            f"Rendering non-blank triple: <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>"
+        )
+        return renderNonBlank(_uber_row)
 
 
 def row2po(stanza, data, row):
