@@ -7,6 +7,7 @@ import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
+from gizmos.hiccup import curie2href
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -40,11 +41,6 @@ def main():
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(terms2rdfa(cur, treename, [args.term]))
-
-
-def curie2href(curie):
-    """Convert a CURIE to an HREF"""
-    return f"?id={curie}".replace("#", "%23")
 
 
 def curie2iri(prefixes, curie):
