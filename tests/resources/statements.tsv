@@ -27,26 +27,6 @@ IAO:0000115	IAO:0000115	rdfs:label		definition		en
 IAO:0000115	IAO:0000115	rdfs:isDefinedBy	obo:iao.owl			
 IAO:0000115	IAO:0000115	IAO:0000119		GROUP:OBI:<http://purl.obolibrary.org/obo/obi>		en
 IAO:0000115	IAO:0000115	IAO:0000117		PERSON:Daniel Schober		en
-IAO:0000115	IAO:0000115	IAO:0000116		2012-04-05: 
-Barry Smith
-
-The official OBI definition, explaining the meaning of a class or property: 'Shall be Aristotelian, formalized and normalized. Can be augmented with colloquial definitions'  is terrible.
-
-Can you fix to something like:
-
-A statement of necessary and sufficient conditions explaining the meaning of an expression referring to a class or property.
-
-Alan Ruttenberg
-
-Your proposed definition is a reasonable candidate, except that it is very common that necessary and sufficient conditions are not given. Mostly they are necessary, occasionally they are necessary and sufficient or just sufficient. Often they use terms that are not themselves defined and so they effectively can't be evaluated by those criteria. 
-
-On the specifics of the proposed definition:
-
-We don't have definitions of 'meaning' or 'expression' or 'property'. For 'reference' in the intended sense I think we use the term 'denotation'. For 'expression', I think we you mean symbol, or identifier. For 'meaning' it differs for class and property. For class we want documentation that let's the intended reader determine whether an entity is instance of the class, or not. For property we want documentation that let's the intended reader determine, given a pair of potential relata, whether the assertion that the relation holds is true. The 'intended reader' part suggests that we also specify who, we expect, would be able to understand the definition, and also generalizes over human and computer reader to include textual and logical definition. 
-
-Personally, I am more comfortable weakening definition to documentation, with instructions as to what is desirable. 
-
-We also have the outstanding issue of how to aim different definitions to different audiences. A clinical audience reading chebi wants a different sort of definition documentation/definition from a chemistry trained audience, and similarly there is a need for a definition that is adequate for an ontologist to work with.		en
 IAO:0000115	IAO:0000115	IAO:0000115		The official definition, explaining the meaning of a class or property. Shall be Aristotelian, formalized and normalized. Can be augmented with colloquial definitions.		en
 IAO:0000115	IAO:0000115	IAO:0000114	IAO:0000122			
 IAO:0000115	IAO:0000115	IAO:0000111		definition	xsd:string	
@@ -88,9 +68,6 @@ IAO:0000232	IAO:0000232	rdf:type	owl:AnnotationProperty
 BFO:0000051	BFO:0000051	rdfs:label		has part		en
 BFO:0000051	BFO:0000051	obo:RO_0001900	obo:RO_0001901			
 BFO:0000051	BFO:0000051	IAO:0000118		has_part		en
-BFO:0000051	BFO:0000051	IAO:0000116		Parthood requires the part and the whole to have compatible classes: only an occurrent have an occurrent as part; only a process can have a process as part; only a continuant can have a continuant as part; only an independent continuant can have an independent continuant as part; only a specifically dependent continuant can have a specifically dependent continuant as part; only a generically dependent continuant can have a generically dependent continuant as part. (This list is not exhaustive.)
-
-A continuant cannot have an occurrent as part: use 'participates in'. An occurrent cannot have a continuant as part: use 'has participant'. An immaterial entity cannot have a material entity as part: use 'location of'. An independent continuant cannot have a specifically dependent continuant as part: use 'bearer of'. A specifically dependent continuant cannot have an independent continuant as part: use 'inheres in'.		en
 BFO:0000051	BFO:0000051	IAO:0000116		Occurrents are not subject to change and so parthood between occurrents holds for all the times that the part exists. Many continuants are subject to change, so parthood between continuants will only hold at certain times, but this is difficult to specify in OWL. See https://code.google.com/p/obo-relations/wiki/ROAndTime		en
 BFO:0000051	BFO:0000051	IAO:0000116		Everything has itself as a part. Any part of any part of a thing is itself part of that thing. Two distinct things cannot have each other as a part.		en
 BFO:0000051	BFO:0000051	IAO:0000115		a core relation that holds between a whole and its part		en
@@ -438,8 +415,7 @@ OBI:0000011	OBI:0000011	IAO:0000232		This class merges the previously separated 
 OBI:0000011	OBI:0000011	IAO:0000232		6/11/9: Edited at workshop. Used to include: is initiated by an agent	xsd:string	
 OBI:0000011	OBI:0000011	IAO:0000119		branch derived	xsd:string	
 OBI:0000011	OBI:0000011	IAO:0000117		Bjoern Peters	xsd:string	
-OBI:0000011	OBI:0000011	IAO:0000116		We are only considering successfully completed planned processes. A plan may be modified, and details added during execution. For a given planned process, the associated realized plan specification is the one encompassing all changes made during execution. This means that all processes in which an agent acts towards achieving some 
-objectives is a planned process.	xsd:string	
+OBI:0000011	OBI:0000011	IAO:0000116		We are only considering successfully completed planned processes. A plan may be modified, and details added during execution. For a given planned process, the associated realized plan specification is the one encompassing all changes made during execution. This means that all processes in which an agent acts towards achieving some objectives is a planned process.	xsd:string	
 OBI:0000011	OBI:0000011	IAO:0000116		'Plan' includes a future direction sense. That can be problematic if plans are changed during their execution. There are however implicit contingencies for protocols that an agent has in his mind that can be considered part of the plan, even if the agent didn't have them in mind before. Therefore, a planned process can diverge from what the agent would have said the plan was before executing it, by adjusting to problems encountered during execution (e.g. choosing another reagent with equivalent properties, if the originally planned one has run out.)	xsd:string	
 OBI:0000011	OBI:0000011	IAO:0000115		A processual entity that realizes a plan which is the concretization of a plan specification.		en
 OBI:0000011	OBI:0000011	IAO:0000114	IAO:0000122			
