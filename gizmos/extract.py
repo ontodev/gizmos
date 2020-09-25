@@ -26,12 +26,8 @@ and include 'statements' and 'prefixes' tables.
 The CURIEs must use a prefix from the 'prefixes' table.
 """
 
-# Track terms already added to database
-added = []
-
 
 def main():
-    global added
     p = ArgumentParser()
     p.add_argument("-d", "--database", required=True, help="SQLite database")
     p.add_argument("-t", "--term", action="append", help="CURIE of term to extract")
@@ -88,90 +84,6 @@ def extract(args):
     return ttl
 
 
-def add_annotations(cur, annotations=None):
-    """Add annotations from the 'statements' table on all subjects in the 'extract' table."""
-    annotation_str = None
-    if annotations:
-        annotation_str = ["'" + x.replace("'", "''") + "'" for x in annotations]
-        annotation_str = ", ".join(annotation_str)
-    cur.execute("SELECT DISTINCT subject FROM extract;")
-    for row in cur.fetchall():
-        subject = row["subject"]
-        query = f"""INSERT INTO extract (stanza, subject, predicate, value, language, datatype)
-                    SELECT DISTINCT
-                      subject AS stanza,
-                      subject,
-                      predicate,
-                      value,
-                      language,
-                      datatype
-                    FROM statements WHERE subject = '{subject}' AND value NOT NULL"""
-        if annotation_str:
-            query += f" AND predicate IN ({annotation_str})"
-        cur.execute(query)
-
-
-def add_ancestors(cur, term_id):
-    """Add the hierarchy for a term ID starting with that term up to the top-level, assuming that
-    term ID exists in the database."""
-    global added
-    cur.execute(
-        f"""
-          WITH RECURSIVE ancestors(parent, child) AS (
-            VALUES ('{term_id}', NULL)
-            UNION
-            SELECT object AS parent, subject AS child
-            FROM statements
-            WHERE predicate = 'rdfs:subClassOf'
-              AND object = '{term_id}'
-            UNION
-            SELECT object AS parent, subject AS child
-            FROM statements, ancestors
-            WHERE ancestors.parent = statements.stanza
-              AND statements.predicate = 'rdfs:subClassOf'
-              AND statements.object NOT LIKE '_:%'
-          )
-          SELECT * FROM ancestors;"""
-    )
-
-    for row in cur.fetchall():
-        parent = row["parent"]
-        if parent and parent not in added:
-            # Only add rdf:type if it hasn't been added
-            added.append(parent)
-            cur.execute(
-                f"""INSERT INTO extract (stanza, subject, predicate, object)
-                        VALUES ('{parent}', '{parent}', 'rdf:type', 'owl:Class');"""
-            )
-
-        child = row["child"]
-        if child and child not in added:
-            # Only add rdf:type if it hasn't been added
-            added.append(child)
-            cur.execute(
-                f"""INSERT INTO extract (stanza, subject, predicate, object)
-                        VALUES ('{child}', '{child}', 'rdf:type', 'owl:Class');"""
-            )
-
-        if child and parent:
-            # Row has child & parent, add subclass statement
-            cur.execute(
-                f"""INSERT INTO extract (stanza, subject, predicate, object)
-                        VALUES ('{child}', '{child}', 'rdfs:subClassOf', '{parent}');"""
-            )
-
-
-def add_term(cur, term_id):
-    """Add the class assertion for a term ID, assuming that term ID exists in the database."""
-    cur.execute(f"SELECT * FROM statements WHERE subject = '{term_id}';")
-    res = cur.fetchone()
-    if res:
-        cur.execute(
-            f"""INSERT INTO extract (stanza, subject, predicate, object)
-                    VALUES ('{term_id}', '{term_id}', 'rdf:type', 'owl:Class');"""
-        )
-
-
 def dict_factory(cursor, row):
     """Create a dict factory for sqlite cursor"""
     d = {}
@@ -182,54 +94,64 @@ def dict_factory(cursor, row):
 
 def extract_terms(database, terms, annotations, no_hierarchy=False):
     """Extract terms from the ontology database and return the module as lines of Turtle."""
+
     # Create a new table (extract) and copy the triples we care about
     # Then write the triples from that table to the output file
     with sqlite3.connect(database) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
-        try:
-            # Create the extract table
-            cur.execute("DROP TABLE IF EXISTS extract;")
-            cur.execute(
-                """CREATE TABLE extract(stanza TEXT,
-                                  subject TEXT,
-                                  predicate TEXT,
-                                  object TEXT,
-                                  value TEXT,
-                                  datatype TEXT,
-                                  language TEXT);"""
-            )
 
-            # Get each term up to the top-level (unless no_hierarchy)
-            if not no_hierarchy:
-                for t in terms:
-                    add_ancestors(cur, t)
-            else:
-                # Only add the terms themselves (as long as they exist)
-                for t in terms:
-                    add_term(cur, t)
+        cur.execute("ATTACH DATABASE '' AS tmp")
 
-            # Add declarations for any annotations used in 'extract'
-            cur.execute(
-                """INSERT INTO extract (stanza, subject, predicate, object)
-                    SELECT DISTINCT
-                      predicate AS stanza,
-                      predicate AS subject,
-                      'rdf:type',
-                      'owl:AnnotationProperty'
-                    FROM extract WHERE value NOT NULL;"""
-            )
+        # Create the extract table
+        cur.execute("CREATE TABLE tmp.terms(parent TEXT NOT NULL, child TEXT)")
+        cur.executemany("INSERT INTO tmp.terms VALUES (?, NULL)", [(x,) for x in terms])
 
-            # Add annotations for all subjects
-            add_annotations(cur, annotations=annotations)
+        cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
+        cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
+        cur.executemany("INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations])
 
-            # Reset row factory
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            return get_ttl(cur)
-        finally:
-            # Always drop the extract table
-            cur.execute("DROP TABLE IF EXISTS extract;")
+        cur.execute(
+            """
+              WITH RECURSIVE ancestors(parent, child) AS (
+                SELECT * FROM terms
+                UNION
+                SELECT object AS parent, subject AS child
+                FROM statements, ancestors
+                WHERE ancestors.parent = statements.stanza
+                  AND statements.predicate = 'rdfs:subClassOf'
+                  AND statements.object NOT LIKE '_:%'
+              )
+              INSERT INTO tmp.terms
+              SELECT parent, child FROM ancestors"""
+        )
+
+        cur.execute(
+            """CREATE TABLE tmp.extract(
+                 stanza TEXT,
+                 subject TEXT,
+                 predicate TEXT,
+                 object TEXT,
+                 value TEXT,
+                 datatype TEXT,
+                 language TEXT
+               )"""
+        )
+        cur.execute("""
+                INSERT INTO tmp.extract (stanza, subject, predicate, object)
+                SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
+                FROM terms WHERE child IS NOT NULL""")
+        cur.execute("""
+                INSERT INTO tmp.extract
+                SELECT *
+                FROM statements
+                WHERE subject IN (SELECT DISTINCT parent FROM terms)
+                  AND predicate IN (SELECT predicate FROM predicates)""")
+
+        # Reset row factory
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        return get_ttl(cur)
 
 
 def get_ttl(cur):
