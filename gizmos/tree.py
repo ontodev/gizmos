@@ -30,9 +30,7 @@ OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
 
 
 def main():
-    p = ArgumentParser(
-        "tree.py", description="create an HTML page to display an ontology term"
-    )
+    p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="*")
     p.add_argument(
@@ -102,9 +100,7 @@ def term2tree(data, treename, term_id, include_db=False):
         if len(children) == max_children:
             total = len(tree["children"])
             attrs = {"href": "javascript:show_children()"}
-            children.append(
-                ["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]]
-            )
+            children.append(["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]])
     children = ["ul", {"id": "children"}] + children
     if len(children) == 0:
         children = ""
@@ -147,9 +143,7 @@ def term2tree(data, treename, term_id, include_db=False):
     return hierarchy
 
 
-def term2rdfa(
-    cur, prefixes, treename, stanza, term_id, include_db=False, add_children=None
-):
+def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_children=None):
     """Create a hiccup-style HTML vector for the given term."""
     if stanza and len(stanza) == 0:
         return set(), "Not found"
@@ -446,9 +440,7 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
         for term_id in term_ids:
             cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
             stanza = cur.fetchall()
-            p, t = term2rdfa(
-                cur, all_prefixes, treename, stanza, term_id, include_db=include_db
-            )
+            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id, include_db=include_db)
             ps.update(p)
             terms.append(t)
 
@@ -546,9 +538,7 @@ def row2o(_stanza, _data, _uber_row):
 
     def getOwlOperands(given_row):
         """Extract all of the operands pointed to by the given row and return them as a list"""
-        LOGGER.debug(
-            "Finding operands for row with predicate: {}".format(given_row["predicate"])
-        )
+        LOGGER.debug("Finding operands for row with predicate: {}".format(given_row["predicate"]))
 
         if not given_row["object"].startswith("_:"):
             LOGGER.debug("Found non-blank operand: {}".format(given_row["object"]))
@@ -568,9 +558,7 @@ def row2o(_stanza, _data, _uber_row):
             inner_subj = inner_row["subject"]
             inner_pred = inner_row["predicate"]
             inner_obj = inner_row["object"]
-            LOGGER.debug(
-                f"Found row with <s,p,o> = <{inner_subj}, {inner_pred}, {inner_obj}>"
-            )
+            LOGGER.debug(f"Found row with <s,p,o> = <{inner_subj}, {inner_pred}, {inner_obj}>")
 
             if inner_pred == "rdf:type":
                 if inner_obj == "owl:Restriction":
@@ -581,27 +569,17 @@ def row2o(_stanza, _data, _uber_row):
                     break
             elif inner_pred == "rdf:rest":
                 if inner_obj != "rdf:nil":
-                    operands.append(
-                        ["span", {"rel": inner_pred}] + getOwlOperands(inner_row)
-                    )
+                    operands.append(["span", {"rel": inner_pred}] + getOwlOperands(inner_row))
                 else:
-                    operands.append(
-                        ["span", {"rel": inner_pred, "resource": "rdf:nil"}]
-                    )
+                    operands.append(["span", {"rel": inner_pred, "resource": "rdf:nil"}])
                 LOGGER.debug(f"Returned from recursing on {inner_pred}")
             elif inner_pred == "rdf:first":
                 if inner_obj.startswith("_:"):
-                    LOGGER.debug(
-                        f"{inner_pred} points to a blank node, following the trail"
-                    )
-                    operands.append(
-                        ["span", {"rel": inner_pred}] + getOwlOperands(inner_row)
-                    )
+                    LOGGER.debug(f"{inner_pred} points to a blank node, following the trail")
+                    operands.append(["span", {"rel": inner_pred}] + getOwlOperands(inner_row))
                     LOGGER.debug(f"Returned from recursing on {inner_pred}")
                 else:
-                    LOGGER.debug(
-                        f"Rendering non-blank object with predicate: {inner_pred}"
-                    )
+                    LOGGER.debug(f"Rendering non-blank object with predicate: {inner_pred}")
                     operands.append(renderNonBlank(inner_row))
 
         return operands
@@ -663,13 +641,9 @@ def row2o(_stanza, _data, _uber_row):
         # via the object of the second row, while 'some' and 'sodium phosphate' are
         # extracted via the predicate and object, respectively, of the third row.
         rdf_type_row = [row for row in given_rows if row["predicate"] == "rdf:type"]
-        property_row = [
-            row for row in given_rows if row["predicate"] == "owl:onProperty"
-        ]
+        property_row = [row for row in given_rows if row["predicate"] == "owl:onProperty"]
         target_row = [
-            row
-            for row in given_rows
-            if row["predicate"] not in ("rdf:type", "owl:onProperty")
+            row for row in given_rows if row["predicate"] not in ("rdf:type", "owl:onProperty")
         ]
         """for rowset in [rdf_type_row, property_row, target_row]:
             if len(rowset) != 1:
@@ -681,17 +655,13 @@ def row2o(_stanza, _data, _uber_row):
         rdf_type_row = rdf_type_row[0]
         if rdf_type_row["object"] != "owl:Restriction":
             LOGGER.error(
-                "Unexpected rdf:type: '{}' found in OWL restriction".format(
-                    rdf_type_row["object"]
-                )
+                "Unexpected rdf:type: '{}' found in OWL restriction".format(rdf_type_row["object"])
             )
             return ["div"]
 
         target_pred = target_row["predicate"]
         target_obj = target_row["object"]
-        LOGGER.debug(
-            "Rendering OWL restriction {} for object {}".format(target_pred, target_obj)
-        )
+        LOGGER.debug("Rendering OWL restriction {} for object {}".format(target_pred, target_obj))
         if target_obj.startswith("_:"):
             inner_rows = [row for row in _stanza if row["subject"] == target_obj]
             target_link = renderOwlClassExpression(inner_rows, target_pred)
@@ -708,10 +678,7 @@ def row2o(_stanza, _data, _uber_row):
 
         return [
             "span",
-            [
-                "span",
-                {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},
-            ],
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},],
             [
                 "a",
                 {"rel": property_row["predicate"], "resource": property_row["object"]},
@@ -750,10 +717,7 @@ def row2o(_stanza, _data, _uber_row):
 
         hiccup = [
             "span",
-            [
-                "span",
-                {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},
-            ],
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},],
         ]
 
         # If `rel` is given, insert the attribute into the second position of the hiccup:
@@ -773,9 +737,7 @@ def row2o(_stanza, _data, _uber_row):
             LOGGER.warning(
                 f"Rendering for <s,p,o> = <{class_subj}, {class_pred}, {class_obj}> not implemented"
             )
-            hiccup.append(
-                ["a", {"rel": class_pred}, _data["labels"].get(class_obj, class_obj)]
-            )
+            hiccup.append(["a", {"rel": class_pred}, _data["labels"].get(class_obj, class_obj)])
 
         return hiccup
 
@@ -794,14 +756,10 @@ def row2o(_stanza, _data, _uber_row):
 
     if not isinstance(uber_obj, str):
         if _uber_row["value"]:
-            LOGGER.debug(
-                "Rendering non-string object with value: {}".format(_uber_row["value"])
-            )
+            LOGGER.debug("Rendering non-string object with value: {}".format(_uber_row["value"]))
             return ["span", {"property": uber_pred}, _uber_row["value"]]
         else:
-            LOGGER.error(
-                "Received non-string object with null value; returning empty div"
-            )
+            LOGGER.error("Received non-string object with null value; returning empty div")
             return ["div"]
     elif uber_obj.startswith("<"):
         LOGGER.debug(f"Rendering literal IRI: {uber_obj}")
@@ -813,9 +771,7 @@ def row2o(_stanza, _data, _uber_row):
         inner_rows = [row for row in _stanza if row["subject"] == uber_obj]
         object_type = [row for row in inner_rows if row["predicate"] == "rdf:type"]
         if len(object_type) != 1:
-            LOGGER.warning(
-                f"Wrong number of object types found for {uber_obj}: {object_type}"
-            )
+            LOGGER.warning(f"Wrong number of object types found for {uber_obj}: {object_type}")
         object_type = object_type[0]["object"] if len(object_type) > 0 else None
 
         if object_type == "owl:Class":
@@ -828,9 +784,7 @@ def row2o(_stanza, _data, _uber_row):
             if not object_type:
                 LOGGER.warning(f"Could not determine object type for {uber_pred}")
             else:
-                LOGGER.warning(
-                    f"Unrecognised object type: {object_type} for predicate {uber_pred}"
-                )
+                LOGGER.warning(f"Unrecognised object type: {object_type} for predicate {uber_pred}")
             return ["span", {"property": uber_pred}, uber_obj]
     else:
         LOGGER.debug(
