@@ -1,24 +1,19 @@
-import os
 import gizmos.tree
 import html5lib
 import sqlite3
-import sys
 
 from pyRdfa.parse import parse_one_node
 from pyRdfa.state import ExecutionContext
 from pyRdfa.options import Options
+from rdflib import Graph
+from util import test_db, create_db, compare_graphs
 
-from rdflib import Graph, Literal, URIRef
 
-
-def test_tree():
-    db = "tests/resources/obi.db"
-    treename = os.path.splitext(os.path.basename(db))[0]
-
-    with sqlite3.connect(db) as conn:
+def check_term(term):
+    with sqlite3.connect(test_db) as conn:
         conn.row_factory = gizmos.tree.dict_factory
         cur = conn.cursor()
-        html = gizmos.tree.terms2rdfa(cur, treename, ["OBI:0100046"])
+        html = gizmos.tree.terms2rdfa(cur, "obi", [term])
 
     # Create the DOM document element
     parser = html5lib.HTMLParser(tree=html5lib.treebuilders.getTreeBuilder("dom"))
@@ -28,7 +23,7 @@ def test_tree():
     top = dom.documentElement
 
     # Create the initial state (from pyRdfa)
-    graph = Graph()
+    actual = Graph()
     options = Options(
         output_default_graph=True,
         output_processor_graph=True,
@@ -43,48 +38,19 @@ def test_tree():
         experimental_features=True,
     )
     state = ExecutionContext(
-        top,
-        graph,
-        base="http://purl.obolibrary.org/obo/",
-        options=options,
-        rdfa_version="1.1",
+        top, actual, base="http://purl.obolibrary.org/obo/", options=options, rdfa_version="1.1",
     )
 
     # Add the RDFa to the RDFLib graph (recursive)
-    parse_one_node(top, graph, None, state, [])
+    parse_one_node(top, actual, None, state, [])
 
-    # Read in the expected output to compare
-    success = True
-    expected_graph = Graph()
-    expected_graph.parse("tests/resources/obi-tree.ttl", format="turtle")
+    expected = Graph()
+    expected.parse(f"tests/resources/obi-tree-{term}.ttl", format="turtle")
 
-    # Check that no triples are missing
-    subjects = expected_graph.subjects()
-    for subject in subjects:
-        for p, o in expected_graph.predicate_objects(subject):
-            if (subject, URIRef(p), Literal(str(o))) not in graph and (
-                subject,
-                URIRef(p),
-                URIRef(o),
-            ) not in graph:
-                success = False
-                print(f"Missing {p}: {o}")
-
-    # Check that no triples have been added
-    subjects = graph.subjects()
-    for subject in subjects:
-        for p, o in graph.predicate_objects(subject):
-            if (subject, URIRef(p), Literal(str(o))) not in expected_graph and (
-                subject,
-                URIRef(p),
-                URIRef(o),
-            ) not in expected_graph:
-                success = False
-                print(f"Added {subject} {p} {o}")
-
-    if not success:
-        sys.exit(1)
+    compare_graphs(actual, expected)
 
 
-if __name__ == "__main__":
-    test_tree()
+def test_tree(create_db):
+    check_term("OBI:0000666")
+    check_term("OBI:0000793")
+    check_term("OBI:0100046")

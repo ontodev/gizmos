@@ -35,15 +35,10 @@ def main():
         "-T", "--terms", help="File containing CURIES of terms to extract",
     )
     p.add_argument(
-        "-a",
-        "--annotation",
-        action="append",
-        help="CURIE of annotation property to include",
+        "-a", "--annotation", action="append", help="CURIE of annotation property to include",
     )
     p.add_argument(
-        "-A",
-        "--annotations",
-        help="File containing CURIEs of annotation properties to include",
+        "-A", "--annotations", help="File containing CURIEs of annotation properties to include",
     )
     p.add_argument(
         "-n",
@@ -109,7 +104,9 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
 
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
         cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
-        cur.executemany("INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations])
+        cur.executemany(
+            "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations]
+        )
 
         cur.execute(
             """
@@ -137,16 +134,20 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
                  language TEXT
                )"""
         )
-        cur.execute("""
+        cur.execute(
+            """
                 INSERT INTO tmp.extract (stanza, subject, predicate, object)
                 SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
-                FROM terms WHERE child IS NOT NULL""")
-        cur.execute("""
+                FROM terms WHERE child IS NOT NULL"""
+        )
+        cur.execute(
+            """
                 INSERT INTO tmp.extract
                 SELECT *
                 FROM statements
                 WHERE subject IN (SELECT DISTINCT parent FROM terms)
-                  AND predicate IN (SELECT predicate FROM predicates)""")
+                  AND predicate IN (SELECT predicate FROM predicates)"""
+        )
 
         # Reset row factory
         conn.row_factory = sqlite3.Row

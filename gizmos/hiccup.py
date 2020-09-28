@@ -9,7 +9,7 @@ def render(prefixes, element, depth=0):
     if not isinstance(element, list):
         raise Exception(f"Element is not a list: {element}")
     if len(element) == 0:
-        raise Exception(f"Element is an empty list")
+        raise Exception("Element is an empty list")
     tag = element.pop(0)
     if not isinstance(tag, str):
         raise Exception(f"Tag '{tag}' is not a string in '{element}'")
@@ -52,7 +52,7 @@ def render_text(element):
     if not isinstance(element, list):
         raise Exception(f"Element is not a list: {element}")
     if len(element) == 0:
-        raise Exception(f"Element is an empty list")
+        raise Exception("Element is an empty list")
     tag = element.pop(0)
     output = ""
     if len(element) > 0:
