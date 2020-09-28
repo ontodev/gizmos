@@ -32,7 +32,7 @@ OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
 def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
-    p.add_argument("term", help="CURIE of ontology term to display", nargs="*")
+    p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
     p.add_argument(
         "-i",
         "--include-db",
@@ -43,7 +43,7 @@ def main():
 
     treename = os.path.splitext(os.path.basename(args.db))[0]
     if args.term:
-        term = args.term
+        term = [args.term]
     else:
         term = None
 
@@ -645,10 +645,10 @@ def row2o(_stanza, _data, _uber_row):
         target_row = [
             row for row in given_rows if row["predicate"] not in ("rdf:type", "owl:onProperty")
         ]
-        """for rowset in [rdf_type_row, property_row, target_row]:
+        for rowset in [rdf_type_row, property_row, target_row]:
             if len(rowset) != 1:
                 LOGGER.error(f"Rows: {given_rows} do not represent a valid restriction")
-                return ["div"]"""
+                return ["div"]
 
         property_row = property_row[0]
         target_row = target_row[0]
@@ -678,7 +678,7 @@ def row2o(_stanza, _data, _uber_row):
 
         return [
             "span",
-            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},],
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]}],
             [
                 "a",
                 {"rel": property_row["predicate"], "resource": property_row["object"]},
@@ -699,13 +699,6 @@ def row2o(_stanza, _data, _uber_row):
         class_row = [row for row in given_rows if row["predicate"].startswith("owl:")]
         LOGGER.debug(f"Found rows: {rdf_type_row}, {class_row}")
 
-        """for rowset in [rdf_type_row, class_row]:
-            if len(rowset) != 1:
-                LOGGER.error(
-                    f"Rows: [{rdf_type_row}, {class_row}] do not represent a valid restriction"
-                )
-                return ["div"]"""
-
         rdf_type_row = rdf_type_row[0]
         class_row = class_row[0]
         class_subj = class_row["subject"]
@@ -717,7 +710,7 @@ def row2o(_stanza, _data, _uber_row):
 
         hiccup = [
             "span",
-            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]},],
+            ["span", {"rel": rdf_type_row["predicate"], "resource": rdf_type_row["object"]}],
         ]
 
         # If `rel` is given, insert the attribute into the second position of the hiccup:
