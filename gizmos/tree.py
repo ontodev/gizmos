@@ -35,6 +35,12 @@ def main():
     )
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="*")
+    p.add_argument(
+        "-i",
+        "--include-db",
+        help="If provided, include db param in query string",
+        action="store_true",
+    )
     args = p.parse_args()
 
     treename = os.path.splitext(os.path.basename(args.db))[0]
@@ -46,7 +52,7 @@ def main():
     with sqlite3.connect(args.db) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
-        sys.stdout.write(terms2rdfa(cur, treename, term))
+        sys.stdout.write(terms2rdfa(cur, treename, term, include_db=args.include_db))
 
 
 def curie2iri(prefixes, curie):
@@ -65,10 +71,14 @@ def dict_factory(cursor, row):
     return d
 
 
-def term2tree(data, treename, term_id):
+def term2tree(data, treename, term_id, include_db=False):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return ""
+
+    db = None
+    if include_db:
+        db = treename
 
     tree = data[treename][term_id]
     child_labels = []
@@ -111,13 +121,13 @@ def term2tree(data, treename, term_id):
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
-                o = ["a", {"resource": oc, "href": curie2href(node)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
                 # Parent is the same
-                o = ["a", {"resource": oc, "href": curie2href(node)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             o = [
@@ -126,7 +136,7 @@ def term2tree(data, treename, term_id):
                     "about": parent,
                     "rev": "rdfs:subClassOf",
                     "resource": oc,
-                    "href": curie2href(node),
+                    "href": curie2href(node, db),
                 },
                 object_label,
             ]
@@ -137,10 +147,16 @@ def term2tree(data, treename, term_id):
     return hierarchy
 
 
-def term2rdfa(cur, prefixes, treename, stanza, term_id, add_children=None):
+def term2rdfa(
+    cur, prefixes, treename, stanza, term_id, include_db=False, add_children=None
+):
     """Create a hiccup-style HTML vector for the given term."""
     if stanza and len(stanza) == 0:
         return set(), "Not found"
+
+    db = None
+    if include_db:
+        db = treename
 
     # A set that will be filled in with all of the compact URIs in the given stanza:
     curies = set()
@@ -323,7 +339,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, add_children=None):
     for predicate in pcs:
         anchor = [
             "a",
-            {"href": curie2href(predicate)},
+            {"href": curie2href(predicate, db)},
             labels.get(predicate, predicate),
         ]
         # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
@@ -341,7 +357,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, add_children=None):
                 # annotations, which we then append to our `o`:
                 ul = ["ul"]
                 for a in ann["rows"]:
-                    ul.append(["li"] + row2po(stanza, data, a))
+                    ul.append(["li"] + row2po(stanza, data, a, db))
                 o.append(
                     [
                         "small",
@@ -362,7 +378,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, add_children=None):
         if os:
             items.append(["li", anchor, ["ul"] + os])
 
-    hierarchy = term2tree(data, treename, term_id)
+    hierarchy = term2tree(data, treename, term_id, include_db=include_db)
     h2 = ""  # term2tree(data, treename, term_id)
 
     term = [
@@ -375,7 +391,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, add_children=None):
     return ps, term
 
 
-def thing2rdfa(cur, all_prefixes, treename):
+def thing2rdfa(cur, all_prefixes, treename, include_db=False):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     cur.execute(
@@ -393,11 +409,17 @@ def thing2rdfa(cur, all_prefixes, treename):
     cur.execute(f"SELECT * FROM statements WHERE stanza = 'owl:Thing'")
     stanza = cur.fetchall()
     return term2rdfa(
-        cur, all_prefixes, treename, stanza, "owl:Thing", add_children=add_children,
+        cur,
+        all_prefixes,
+        treename,
+        stanza,
+        "owl:Thing",
+        include_db=include_db,
+        add_children=add_children,
     )
 
 
-def terms2rdfa(cur, treename, term_ids):
+def terms2rdfa(cur, treename, term_ids, include_db=False):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
@@ -415,7 +437,7 @@ def terms2rdfa(cur, treename, term_ids):
         term_ids = ["owl:Thing"]
         if not res:
             # No declared children of owl:Thing, find the top-level ourselves
-            p, t = thing2rdfa(cur, all_prefixes, treename)
+            p, t = thing2rdfa(cur, all_prefixes, treename, include_db=include_db)
             ps.update(p)
             terms.append(t)
 
@@ -424,7 +446,9 @@ def terms2rdfa(cur, treename, term_ids):
         for term_id in term_ids:
             cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
             stanza = cur.fetchall()
-            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id)
+            p, t = term2rdfa(
+                cur, all_prefixes, treename, stanza, term_id, include_db=include_db
+            )
             ps.update(p)
             terms.append(t)
 
@@ -486,7 +510,11 @@ def terms2rdfa(cur, treename, term_ids):
         ]
     )
     html = ["html", head, body]
-    output = "Content-Type: text/html\n\n" + render(all_prefixes, html)
+
+    db = None
+    if include_db:
+        db = treename
+    output = "Content-Type: text/html\n\n" + render(all_prefixes, html, db)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
@@ -811,11 +839,11 @@ def row2o(_stanza, _data, _uber_row):
         return renderNonBlank(_uber_row)
 
 
-def row2po(stanza, data, row):
+def row2po(stanza, data, row, db):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2href(predicate)}, predicate_label]
+    p = ["a", {"href": curie2href(predicate, db)}, predicate_label]
     o = row2o(stanza, data, row)
     return [p, o]
 

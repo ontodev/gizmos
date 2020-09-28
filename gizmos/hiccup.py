@@ -1,9 +1,11 @@
-def curie2href(curie):
+def curie2href(curie, db=None):
     """Convert a CURIE to an HREF"""
+    if db:
+        return f"?db={db}&id={curie}".replace("#", "%23")
     return f"?id={curie}".replace("#", "%23")
 
 
-def render(prefixes, element, depth=0):
+def render(prefixes, element, db=None, depth=0):
     """Render hiccup-style HTML vector as HTML."""
     indent = "  " * depth
     if not isinstance(element, list):
@@ -18,7 +20,7 @@ def render(prefixes, element, depth=0):
     if len(element) > 0 and isinstance(element[0], dict):
         attrs = element.pop(0)
         if tag == "a" and "href" not in attrs and "resource" in attrs:
-            attrs["href"] = curie2href(attrs["resource"])
+            attrs["href"] = curie2href(attrs["resource"], db)
         for key, value in attrs.items():
             if key in ["checked"]:
                 if value:
@@ -37,7 +39,7 @@ def render(prefixes, element, depth=0):
                 output += child
             elif isinstance(child, list):
                 try:
-                    output += "\n" + render(prefixes, child, depth=depth + 1)
+                    output += "\n" + render(prefixes, child, db=db, depth=depth + 1)
                     spacing = f"\n{indent}"
                 except Exception as e:
                     raise Exception(f"Bad child in '{element}'", e)
