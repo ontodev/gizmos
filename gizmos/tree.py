@@ -32,15 +32,25 @@ OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
 def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
-    p.add_argument("term", help="CURIE of ontology term to display")
+    p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
+    p.add_argument(
+        "-i",
+        "--include-db",
+        help="If provided, include db param in query string",
+        action="store_true",
+    )
     args = p.parse_args()
 
     treename = os.path.splitext(os.path.basename(args.db))[0]
+    if args.term:
+        term = [args.term]
+    else:
+        term = None
 
     with sqlite3.connect(args.db) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
-        sys.stdout.write(terms2rdfa(cur, treename, [args.term]))
+        sys.stdout.write(terms2rdfa(cur, treename, term, include_db=args.include_db))
 
 
 def curie2iri(prefixes, curie):
@@ -59,10 +69,14 @@ def dict_factory(cursor, row):
     return d
 
 
-def term2tree(data, treename, term_id):
+def term2tree(data, treename, term_id, include_db=False):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return ""
+
+    db = None
+    if include_db:
+        db = treename
 
     tree = data[treename][term_id]
     child_labels = []
@@ -103,13 +117,13 @@ def term2tree(data, treename, term_id):
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
-                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
                 # Parent is the same
-                o = ["a", {"resource": oc, "href": curie2href(term_id)}, object_label]
+                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             o = [
@@ -118,7 +132,7 @@ def term2tree(data, treename, term_id):
                     "about": parent,
                     "rev": "rdfs:subClassOf",
                     "resource": oc,
-                    "href": curie2href(term_id),
+                    "href": curie2href(node, db),
                 },
                 object_label,
             ]
@@ -129,10 +143,14 @@ def term2tree(data, treename, term_id):
     return hierarchy
 
 
-def term2rdfa(cur, prefixes, treename, stanza, term_id):
+def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_children=None):
     """Create a hiccup-style HTML vector for the given term."""
-    if len(stanza) == 0:
+    if stanza and len(stanza) == 0:
         return set(), "Not found"
+
+    db = None
+    if include_db:
+        db = treename
 
     # A set that will be filled in with all of the compact URIs in the given stanza:
     curies = set()
@@ -162,7 +180,10 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
       )
       SELECT * FROM ancestors"""
     )
-    for row in cur.fetchall():
+    res = cur.fetchall()
+    if add_children:
+        res.extend([{"parent": term_id, "child": child} for child in add_children])
+    for row in res:
         # Consider the parent column of the current row:
         parent = row["parent"]
         if not parent:
@@ -238,7 +259,10 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     # multiple labels, in which case we will just choose one and show it everywhere). This defaults
     # to the term id itself, unless there is a label for the term in the stanza corresponding to the
     # label for that term in the labels map:
-    selected_label = labels[term_id]
+    if term_id in labels:
+        selected_label = labels[term_id]
+    else:
+        selected_label = term_id
     label = term_id
     for row in stanza:
         predicate = row["predicate"]
@@ -256,6 +280,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
     annotations = {}
+    row = None
     for row in stanza:
         subject = row["subject"]
         if subject not in annotation_bnodes:
@@ -306,7 +331,11 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     pcs = list(s2.keys())
     pcs.sort()
     for predicate in pcs:
-        anchor = ["a", {"href": curie2href(predicate)}, labels.get(predicate, predicate)]
+        anchor = [
+            "a",
+            {"href": curie2href(predicate, db)},
+            labels.get(predicate, predicate),
+        ]
         # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
         os = []
         for row in s2[predicate]:
@@ -322,7 +351,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
                 # annotations, which we then append to our `o`:
                 ul = ["ul"]
                 for a in ann["rows"]:
-                    ul.append(["li"] + row2po(stanza, data, a))
+                    ul.append(["li"] + row2po(stanza, data, a, db))
                 o.append(
                     [
                         "small",
@@ -343,7 +372,7 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
         if os:
             items.append(["li", anchor, ["ul"] + os])
 
-    hierarchy = term2tree(data, treename, term_id)
+    hierarchy = term2tree(data, treename, term_id, include_db=include_db)
     h2 = ""  # term2tree(data, treename, term_id)
 
     term = [
@@ -356,18 +385,76 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id):
     return ps, term
 
 
-def terms2rdfa(cur, treename, term_ids):
-    """Create a hiccup-style HTML vector for the given terms."""
+def thing2rdfa(cur, all_prefixes, treename, include_db=False):
+    """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
+    # Select all classes without parents and set them as children of owl:Thing
+    cur.execute(
+        """SELECT DISTINCT subject FROM statements 
+        WHERE subject NOT IN 
+            (SELECT subject FROM statements
+             WHERE predicate = 'rdfs:subClassOf')
+        AND subject IN 
+            (SELECT subject FROM statements 
+             WHERE predicate = 'rdf:type'
+             AND object = 'owl:Class' AND subject NOT LIKE '_:%');"""
+    )
+    res = cur.fetchall()
+    add_children = [x["subject"] for x in res if x["subject"] != "owl:Thing"]
+    cur.execute(f"SELECT * FROM statements WHERE stanza = 'owl:Thing'")
+    stanza = cur.fetchall()
+    if not stanza:
+        stanza = [
+            {
+                "stanza": "owl:Thing",
+                "subject": "owl:Thing",
+                "predicate": "rdf:type",
+                "object": "owl:Class",
+                "value": None,
+                "datatype": None,
+                "language": None,
+            }
+        ]
+    return term2rdfa(
+        cur,
+        all_prefixes,
+        treename,
+        stanza,
+        "owl:Thing",
+        include_db=include_db,
+        add_children=add_children,
+    )
+
+
+def terms2rdfa(cur, treename, term_ids, include_db=False):
+    """Create a hiccup-style HTML vector for the given terms.
+    If there are no terms, create the HTML vector for owl:Thing."""
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
     all_prefixes = [(x["prefix"], x["base"]) for x in cur.fetchall()]
     ps = set()
     terms = []
-    for term_id in term_ids:
-        cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
-        stanza = cur.fetchall()
-        p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id)
-        ps.update(p)
-        terms.append(t)
+    if not term_ids:
+        # First check if there are terms that are declared children of owl:Thing
+        # If results exits, the normal tree script will run with term owl:Thing
+        cur.execute(
+            """SELECT DISTINCT subject FROM statements
+            WHERE predicate = 'rdfs:subClassOf' AND object = 'owl:Thing';"""
+        )
+        res = cur.fetchall()
+        term_ids = ["owl:Thing"]
+        if not res:
+            # No declared children of owl:Thing, find the top-level ourselves
+            p, t = thing2rdfa(cur, all_prefixes, treename, include_db=include_db)
+            ps.update(p)
+            terms.append(t)
+
+    # Run for given terms if terms have not yet been filled out
+    if not terms:
+        for term_id in term_ids:
+            cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
+            stanza = cur.fetchall()
+            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id, include_db=include_db)
+            ps.update(p)
+            terms.append(t)
 
     data = {"labels": {}}
 
@@ -427,7 +514,11 @@ def terms2rdfa(cur, treename, term_ids):
         ]
     )
     html = ["html", head, body]
-    output = "Content-Type: text/html\n\n" + render(all_prefixes, html)
+
+    db = None
+    if include_db:
+        db = treename
+    output = "Content-Type: text/html\n\n" + render(all_prefixes, html, db)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
@@ -444,7 +535,7 @@ def row2o(_stanza, _data, _uber_row):
     of the labels in it, and a row in the stanza, convert the row to hiccup-style HTML."""
 
     def renderNonBlank(given_row):
-        "Renders the non-blank object from the given row"
+        """Renders the non-blank object from the given row"""
         return [
             "a",
             {"rel": given_row["predicate"], "resource": given_row["object"]},
@@ -452,13 +543,13 @@ def row2o(_stanza, _data, _uber_row):
         ]
 
     def renderLiteral(given_row):
-        "Renders the object contained in the given row as a literal IRI"
+        """Renders the object contained in the given row as a literal IRI"""
         # Literal IRIs are enclosed in angle brackets.
         iri = given_row["object"][1:-1]
         return ["a", {"rel": given_row["predicate"], "href": iri}, iri]
 
     def getOwlOperands(given_row):
-        "Extract all of the operands pointed to by the given row and return them as a list"
+        """Extract all of the operands pointed to by the given row and return them as a list"""
         LOGGER.debug("Finding operands for row with predicate: {}".format(given_row["predicate"]))
 
         if not given_row["object"].startswith("_:"):
@@ -506,7 +597,7 @@ def row2o(_stanza, _data, _uber_row):
         return operands
 
     def renderNaryRelation(class_pred, operands):
-        "Render an n-ary relation using the given predicate and operands"
+        """Render an n-ary relation using the given predicate and operands"""
         if len(operands) < 2:
             LOGGER.error(
                 f"Something is wrong. Wrong number of operands to '{class_pred}': {operands}"
@@ -532,7 +623,7 @@ def row2o(_stanza, _data, _uber_row):
         return owl_div
 
     def renderUnaryRelation(class_pred, operands):
-        "Render a unary relation using the given predicate and operands"
+        """Render a unary relation using the given predicate and operands"""
         if len(operands) != 1:
             LOGGER.error(
                 f"Something is wrong. Wrong number of operands to '{class_pred}': {operands}"
@@ -550,7 +641,7 @@ def row2o(_stanza, _data, _uber_row):
         return owl_div
 
     def renderOwlRestriction(given_rows):
-        "Renders the OWL restriction described by the given rows"
+        """Renders the OWL restriction described by the given rows"""
         # OWL restrictions are represented using three rows. The first will have the predicate
         # 'rdf:type' and its object should always be 'owl:Restriction'. The second row will have the
         # predicate 'owl:onProperty' and its object will represent the property being restricted,
@@ -611,7 +702,7 @@ def row2o(_stanza, _data, _uber_row):
         ]
 
     def renderOwlClassExpression(given_rows, rel=None):
-        "Render the OWL class expression pointed to by the given row"
+        """Render the OWL class expression pointed to by the given row"""
         # The sub-stanza corresponding to an owl:Class should have two rows. One of these points
         # to the actual class referred to (either a named class or a blank node). From this row we
         # get the subject, predicate, and object to render. The second row will have the object
@@ -619,13 +710,6 @@ def row2o(_stanza, _data, _uber_row):
         rdf_type_row = [row for row in given_rows if row["predicate"] == "rdf:type"]
         class_row = [row for row in given_rows if row["predicate"].startswith("owl:")]
         LOGGER.debug(f"Found rows: {rdf_type_row}, {class_row}")
-
-        for rowset in [rdf_type_row, class_row]:
-            if len(rowset) != 1:
-                LOGGER.error(
-                    f"Rows: [{rdf_type_row}, {class_row}] do not represent a valid restriction"
-                )
-                return ["div"]
 
         rdf_type_row = rdf_type_row[0]
         class_row = class_row[0]
@@ -650,6 +734,8 @@ def row2o(_stanza, _data, _uber_row):
             hiccup.append(renderNaryRelation(class_pred, operands))
         elif class_pred == "owl:complementOf":
             hiccup.append(renderUnaryRelation(class_pred, operands))
+        elif class_pred == "owl:onProperty":
+            hiccup.append(renderOwlRestriction(given_rows))
         elif class_obj.startswith("<"):
             hiccup.append(renderLiteral(class_row))
         else:
@@ -712,11 +798,11 @@ def row2o(_stanza, _data, _uber_row):
         return renderNonBlank(_uber_row)
 
 
-def row2po(stanza, data, row):
+def row2po(stanza, data, row, db):
     """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2href(predicate)}, predicate_label]
+    p = ["a", {"href": curie2href(predicate, db)}, predicate_label]
     o = row2o(stanza, data, row)
     return [p, o]
 
