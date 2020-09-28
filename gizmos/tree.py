@@ -402,6 +402,18 @@ def thing2rdfa(cur, all_prefixes, treename, include_db=False):
     add_children = [x["subject"] for x in res if x["subject"] != "owl:Thing"]
     cur.execute(f"SELECT * FROM statements WHERE stanza = 'owl:Thing'")
     stanza = cur.fetchall()
+    if not stanza:
+        stanza = [
+            {
+                "stanza": "owl:Thing",
+                "subject": "owl:Thing",
+                "predicate": "rdf:type",
+                "object": "owl:Class",
+                "value": None,
+                "datatype": None,
+                "language": None,
+            }
+        ]
     return term2rdfa(
         cur,
         all_prefixes,
