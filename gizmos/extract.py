@@ -107,21 +107,21 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
         cur.executemany(
             "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations]
         )
-
-        cur.execute(
-            """
-              WITH RECURSIVE ancestors(parent, child) AS (
-                SELECT * FROM terms
-                UNION
-                SELECT object AS parent, subject AS child
-                FROM statements, ancestors
-                WHERE ancestors.parent = statements.stanza
-                  AND statements.predicate = 'rdfs:subClassOf'
-                  AND statements.object NOT LIKE '_:%'
-              )
-              INSERT INTO tmp.terms
-              SELECT parent, child FROM ancestors"""
-        )
+        if not no_hierarchy:
+            cur.execute(
+                """
+                  WITH RECURSIVE ancestors(parent, child) AS (
+                    SELECT * FROM terms
+                    UNION
+                    SELECT object AS parent, subject AS child
+                    FROM statements, ancestors
+                    WHERE ancestors.parent = statements.stanza
+                      AND statements.predicate = 'rdfs:subClassOf'
+                      AND statements.object NOT LIKE '_:%'
+                  )
+                  INSERT INTO tmp.terms
+                  SELECT parent, child FROM ancestors"""
+            )
 
         cur.execute(
             """CREATE TABLE tmp.extract(
