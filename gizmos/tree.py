@@ -313,9 +313,14 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     # print(foo)
     #
     # The variable `row` below is the last `row` retrieved from the immediately preceeding for loop.
-    subject = row["subject"]
-    si = curie2iri(prefixes, subject)
-    subject_label = label
+    if row:
+        subject = row["subject"]
+        si = curie2iri(prefixes, subject)
+        subject_label = label
+    else:
+        subject = term_id
+        si = curie2iri(prefixes, subject)
+        subject_label = label
 
     # The initial hiccup, which will be filled in later:
     items = ["ul", {"id": "annotations", "class": "col-md"}]
