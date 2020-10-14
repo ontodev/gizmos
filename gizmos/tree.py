@@ -114,7 +114,10 @@ def term2tree(data, treename, term_id, include_db=False):
     if len(children) == 0:
         children = ""
     # <a about="parent_id" rev="rdfs:subClassOf" resource="term_id" href="?id=term_id">entity</a>
-    hierarchy = ["ul", ["li", tree_label(data, treename, term_id), children]]
+    term_label = tree_label(data, treename, term_id)
+    if term_id in obsolete:
+        term_label = ["s", term_label]
+    hierarchy = ["ul", ["li", term_label, children]]
     i = 0
     parents = tree["parents"]
     if parents:
@@ -123,6 +126,8 @@ def term2tree(data, treename, term_id, include_db=False):
             i += 1
             oc = node
             object_label = tree_label(data, treename, node)
+            if node in obsolete:
+                object_label = ["s", object_label]
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
