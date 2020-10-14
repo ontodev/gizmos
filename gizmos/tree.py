@@ -79,10 +79,17 @@ def term2tree(data, treename, term_id, include_db=False):
         db = treename
 
     tree = data[treename][term_id]
+    obsolete = data["obsolete"]
     child_labels = []
+    obsolete_child_labels = []
     for child in tree["children"]:
-        child_labels.append([child, data["labels"].get(child, child)])
+        if child in obsolete:
+            obsolete_child_labels.append([child, data["labels"].get(child, child)])
+        else:
+            child_labels.append([child, data["labels"].get(child, child)])
     child_labels.sort(key=lambda x: x[1].lower())
+    obsolete_child_labels.sort(key=lambda x: x[1].lower())
+    child_labels.extend(obsolete_child_labels)
 
     max_children = 100
     children = []
@@ -92,6 +99,8 @@ def term2tree(data, treename, term_id, include_db=False):
         predicate = "rdfs:subClassOf"
         oc = child
         object_label = tree_label(data, treename, oc)
+        if child in obsolete:
+            object_label = ["s", object_label]
         o = ["a", {"rev": predicate, "resource": oc}, object_label]
         attrs = {}
         if len(children) > max_children:
@@ -105,7 +114,10 @@ def term2tree(data, treename, term_id, include_db=False):
     if len(children) == 0:
         children = ""
     # <a about="parent_id" rev="rdfs:subClassOf" resource="term_id" href="?id=term_id">entity</a>
-    hierarchy = ["ul", ["li", tree_label(data, treename, term_id), children]]
+    term_label = tree_label(data, treename, term_id)
+    if term_id in obsolete:
+        term_label = ["s", term_label]
+    hierarchy = ["ul", ["li", term_label, children]]
     i = 0
     parents = tree["parents"]
     if parents:
@@ -114,6 +126,8 @@ def term2tree(data, treename, term_id, include_db=False):
             i += 1
             oc = node
             object_label = tree_label(data, treename, node)
+            if node in obsolete:
+                object_label = ["s", object_label]
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
@@ -245,9 +259,19 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     for row in cur:
         labels[row["subject"]] = row["value"]
 
+    obsolete = []
+    cur.execute(
+        f"""SELECT DISTINCT subject
+            FROM statements
+            WHERE stanza in ('{ids}')
+              AND predicate='owl:deprecated'
+              AND value='true'""")
+    for row in cur:
+        obsolete.append(row["subject"])
+
     # Initialise a map with one entry for the tree and one for all of the labels corresponding to
     # all of the compact URIs in the stanza:
-    data = {"labels": labels, treename: tree}
+    data = {"labels": labels, "obsolete": obsolete, treename: tree}
 
     # If the compact URIs in the labels map are also in the tree, then add the label info to the
     # corresponding node in the tree:
