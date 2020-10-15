@@ -16,7 +16,7 @@ def main():
     names = get_names(args.db, args.text, args.limit)
     output = "Content-Type: application/json\n\n"
     output += json.dumps(names, indent=4)
-    sys.stdout.write()
+    sys.stdout.write(output)
 
 
 def get_names(db_path, text, limit):
