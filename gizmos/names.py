@@ -3,7 +3,7 @@ import sqlite3
 import sys
 
 from argparse import ArgumentParser
-from .helpers import *
+from .helpers import dict_factory
 
 
 def main():

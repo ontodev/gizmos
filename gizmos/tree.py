@@ -8,6 +8,7 @@ import sys
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import curie2href, render
+from .helpers import dict_factory
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -66,14 +67,6 @@ def curie2iri(prefixes, curie):
         if curie.startswith(prefix + ":"):
             return curie.replace(prefix + ":", base)
     raise Exception(f"No matching prefix for {curie}")
-
-
-def dict_factory(cursor, row):
-    """Create a dict factory for sqlite cursor"""
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
 
 
 def term2tree(data, treename, term_id, include_db=False):

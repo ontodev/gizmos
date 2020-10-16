@@ -51,9 +51,9 @@ ID=$(urlp --query --query_field=id "${URL}")
 
 # Generate the tree view
 if [[ ${ID} ]]; then
-	python3 -m gizmos.tree foo.db ${ID}
+    python3 -m gizmos.tree foo.db ${ID}
 else
-	python3 -m gizmos.tree foo.db
+    python3 -m gizmos.tree foo.db
 fi
 ```
 
@@ -72,18 +72,18 @@ FORMAT=$(urlp --query --query_field=format "${URL}")
 TEXT=$(urlp --query --query_field=text "${URL}")
 
 if [ ${FORMAT} == "json" ]; then
-	# Call gizmos.names to return names JSON for typeahead search
-	if [[ ${TEXT} ]]; then
-		python3 -m gizmos.names build/${DB}.db ${TEXT}
-	else
-		python3 -m gizmos.names build/${DB}.db
-	fi
+    # Call gizmos.names to return names JSON for typeahead search
+    if [[ ${TEXT} ]]; then
+        python3 -m gizmos.names build/${DB}.db ${TEXT}
+    else
+        python3 -m gizmos.names build/${DB}.db
+    fi
 else
-	# Generate the tree view with database query parameter and search bar
-	if [[ ${ID} ]]; then
-		python3 -m gizmos.tree build/${DB}.db ${ID} -d -s
-	else
-		python3 -m gizmos.tree build/${DB}.db -d -s
-	fi
+    # Generate the tree view with database query parameter and search bar
+    if [[ ${ID} ]]; then
+        python3 -m gizmos.tree build/${DB}.db ${ID} -d -s
+    else
+        python3 -m gizmos.tree build/${DB}.db -d -s
+    fi
 fi
 ```
