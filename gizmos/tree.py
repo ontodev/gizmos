@@ -8,7 +8,6 @@ import sys
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import curie2href, render
-from .helpers import dict_factory
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -44,19 +43,22 @@ def main():
         "-s", "--include-search", help="If provided, include a search bar", action="store_true"
     )
     args = p.parse_args()
+    tree(args.db, args.term, include_db=args.include_db, include_search=args.include_search)
 
-    treename = os.path.splitext(os.path.basename(args.db))[0]
-    if args.term:
-        term = [args.term]
+
+def tree(db, term, include_db=False, include_search=False):
+    treename = os.path.splitext(os.path.basename(db))[0]
+    if term:
+        term = [term]
     else:
         term = None
 
-    with sqlite3.connect(args.db) as conn:
+    with sqlite3.connect(db) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(
             terms2rdfa(
-                cur, treename, term, include_db=args.include_db, include_search=args.include_search
+                cur, treename, term, include_db=include_db, include_search=include_search
             )
         )
 
@@ -67,6 +69,14 @@ def curie2iri(prefixes, curie):
         if curie.startswith(prefix + ":"):
             return curie.replace(prefix + ":", base)
     raise Exception(f"No matching prefix for {curie}")
+
+
+def dict_factory(cursor, row):
+    """Create a dict factory for sqlite cursor"""
+    d = {}
+    for idx, col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
 
 
 def term2tree(data, treename, term_id, include_db=False):
@@ -741,7 +751,7 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
           else return 0;
         },
         remote: {
-          url: '?db=ontie&text=%QUERY&format=json',
+          url: '?text=%QUERY&format=json',
           wildcard: '%QUERY',
           transform : function(response) {
               return bloodhound.sorter(response)

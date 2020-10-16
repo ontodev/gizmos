@@ -12,8 +12,11 @@ def main():
     p.add_argument("text", nargs="?", help="Text to search")
     p.add_argument("-l", "--limit", help="Limit for number of results", type=int, default=30)
     args = p.parse_args()
+    search(args.db, args.text, args.limit)
 
-    names = get_names(args.db, args.text, args.limit)
+
+def search(db, text, limit=30):
+    names = get_names(db, text, limit)
     output = "Content-Type: application/json\n\n"
     output += json.dumps(names, indent=4)
     sys.stdout.write(output)
@@ -23,7 +26,7 @@ def get_names(db_path, text, limit):
     """Return a list of name details.
     Each item in the list is a dict containing 'display_name' (label) and 'value' (CURIE)."""
     names = []
-    with sqlite3.connect(db_path, uri=True) as conn:
+    with sqlite3.connect(db_path) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
         if text:
