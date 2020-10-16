@@ -713,6 +713,7 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
     # Custom JS for search bar using Typeahead
     if include_search:
         add_query = ""
+        remote = "'?text=%QUERY&format=json'"
         if include_db:
             # Add tree name to query params
             add_query = f'str.push("db={treename}");'
