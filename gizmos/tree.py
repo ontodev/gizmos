@@ -619,32 +619,16 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
         body.append(
             [
                 "div",
-                {"class": "row"},
+                {"class": "form-row mt-2 mb-2"},
                 [
-                    "div",
-                    {"class": "col-sm-4"},
-                    [
-                        "div",
-                        {"class": "form-group row"},
-                        [
-                            "label",
-                            {"for": "statements-typeahead", "class": "col-sm-2 col-form-label"},
-                            "Search",
-                        ],
-                        [
-                            "div",
-                            {"class": "col-sm-9"},
-                            [
-                                "input",
-                                {
-                                    "id": f"statements-typeahead",
-                                    "class": "typeahead form-control",
-                                    "type": "text",
-                                    "value": "",
-                                },
-                            ],
-                        ],
-                    ],
+                    "input",
+                    {
+                        "id": f"statements-typeahead",
+                        "class": "typeahead form-control",
+                        "type": "text",
+                        "value": "",
+                        "placeholder": "Search",
+                    },
                 ],
             ]
         )
