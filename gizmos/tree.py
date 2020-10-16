@@ -714,7 +714,9 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
     if include_search:
         add_query = ""
         if include_db:
+            # Add tree name to query params
             add_query = f'str.push("db={treename}");'
+            remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
             """$('#search-form').submit(function () {
         $(this)
@@ -751,7 +753,7 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
           else return 0;
         },
         remote: {
-          url: '?text=%QUERY&format=json',
+          url: """ + remote + """,
           wildcard: '%QUERY',
           transform : function(response) {
               return bloodhound.sorter(response)
