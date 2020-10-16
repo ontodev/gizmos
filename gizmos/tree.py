@@ -34,23 +34,33 @@ def main():
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
     p.add_argument(
-        "-i",
+        "-d",
         "--include-db",
         help="If provided, include db param in query string",
         action="store_true",
     )
+    p.add_argument(
+        "-s", "--include-search", help="If provided, include a search bar", action="store_true"
+    )
     args = p.parse_args()
+    tree(args.db, args.term, include_db=args.include_db, include_search=args.include_search)
 
-    treename = os.path.splitext(os.path.basename(args.db))[0]
-    if args.term:
-        term = [args.term]
+
+def tree(db, term, include_db=False, include_search=False):
+    treename = os.path.splitext(os.path.basename(db))[0]
+    if term:
+        term = [term]
     else:
         term = None
 
-    with sqlite3.connect(args.db) as conn:
+    with sqlite3.connect(db) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
-        sys.stdout.write(terms2rdfa(cur, treename, term, include_db=args.include_db))
+        sys.stdout.write(
+            terms2rdfa(
+                cur, treename, term, include_db=include_db, include_search=include_search
+            )
+        )
 
 
 def curie2iri(prefixes, curie):
@@ -454,7 +464,7 @@ def thing2rdfa(cur, all_prefixes, treename, include_db=False):
     )
 
 
-def terms2rdfa(cur, treename, term_ids, include_db=False):
+def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
@@ -487,6 +497,7 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
 
     data = {"labels": {}}
 
+    # HTML Headers & CSS
     head = [
         "head",
         ["meta", {"charset": "utf-8"}],
@@ -508,6 +519,118 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
         ["title", data["labels"].get(term_ids[0], treename + " Browser")],
     ]
+    if include_search:
+        head.append(
+            [
+                "style",
+                """
+    #annotations {
+      padding-left: 1em;
+      list-style-type: none !important;
+    }
+    #annotations ul {
+      padding-left: 3em;
+      list-style-type: circle !important;
+    }
+    #annotations ul ul {
+      padding-left: 2em;
+      list-style-type: none !important;
+    }
+    .hierarchy {
+      padding-left: 0em;
+      list-style-type: none !important;
+    }
+    .hierarchy ul {
+      padding-left: 1em;
+      list-style-type: none !important;
+    }
+    .hierarchy ul.multiple-children > li > ul {
+      border-left: 1px dotted #ddd;
+    }
+    .hierarchy .children {
+      border-left: none;
+      margin-left: 2em;
+      text-indent: -1em;
+    }
+    .hierarchy .children li::before {
+      content: "\2022";
+      color: #ddd;
+      display: inline-block;
+      width: 0em;
+      margin-left: -1em;
+    }
+    #nonpeptides .tt-dataset {
+      max-height: 300px;
+      overflow-y: scroll;
+    }
+    span.twitter-typeahead .tt-menu {
+      cursor: pointer;
+    }
+    .dropdown-menu, span.twitter-typeahead .tt-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      z-index: 1000;
+      display: none;
+      float: left;
+      min-width: 160px;
+      padding: 5px 0;
+      margin: 2px 0 0;
+      font-size: 1rem;
+      color: #373a3c;
+      text-align: left;
+      list-style: none;
+      background-color: #fff;
+      background-clip: padding-box;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 0.25rem; }
+    span.twitter-typeahead .tt-suggestion {
+      display: block;
+      width: 100%;
+      padding: 3px 20px;
+      clear: both;
+      font-weight: normal;
+      line-height: 1.5;
+      color: #373a3c;
+      text-align: inherit;
+      white-space: nowrap;
+      background: none;
+      border: 0; }
+    span.twitter-typeahead .tt-suggestion:focus,
+    .dropdown-item:hover,
+    span.twitter-typeahead .tt-suggestion:hover {
+        color: #2b2d2f;
+        text-decoration: none;
+        background-color: #f5f5f5; }
+    span.twitter-typeahead .active.tt-suggestion,
+    span.twitter-typeahead .tt-suggestion.tt-cursor,
+    span.twitter-typeahead .active.tt-suggestion:focus,
+    span.twitter-typeahead .tt-suggestion.tt-cursor:focus,
+    span.twitter-typeahead .active.tt-suggestion:hover,
+    span.twitter-typeahead .tt-suggestion.tt-cursor:hover {
+        color: #fff;
+        text-decoration: none;
+        background-color: #0275d8;
+        outline: 0; }
+    span.twitter-typeahead .disabled.tt-suggestion,
+    span.twitter-typeahead .disabled.tt-suggestion:focus,
+    span.twitter-typeahead .disabled.tt-suggestion:hover {
+        color: #818a91; }
+    span.twitter-typeahead .disabled.tt-suggestion:focus,
+    span.twitter-typeahead .disabled.tt-suggestion:hover {
+        text-decoration: none;
+        cursor: not-allowed;
+        background-color: transparent;
+        background-image: none;
+        filter: "progid:DXImageTransform.Microsoft.gradient(enabled = false)"; }
+    span.twitter-typeahead {
+      width: 100%; }
+      .input-group span.twitter-typeahead {
+        display: block !important; }
+        .input-group span.twitter-typeahead .tt-menu {
+          top: 2.375rem !important; }""",
+            ]
+        )
 
     # Create the prefix element
     pref_strs = []
@@ -515,7 +638,27 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
         pref_strs.append(f"{prefix}: {base}")
     pref_str = "\n".join(pref_strs)
 
-    body = ["body", {"class": "container", "prefix": pref_str}] + terms
+    body = ["body", {"class": "container", "prefix": pref_str}]
+    if include_search:
+        body.append(
+            [
+                "div",
+                {"class": "form-row mt-2 mb-2"},
+                [
+                    "input",
+                    {
+                        "id": f"statements-typeahead",
+                        "class": "typeahead form-control",
+                        "type": "text",
+                        "value": "",
+                        "placeholder": "Search",
+                    },
+                ],
+            ]
+        )
+    body = body + terms
+
+    # JQuery
     body.append(
         [
             "script",
@@ -526,11 +669,45 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
             },
         ]
     )
-    body.append(
-        [
-            "script",
-            {"type": "text/javascript"},
-            """function show_children() {
+
+    if include_search:
+        # Popper.js
+        body.append(
+            [
+                "script",
+                {
+                    "src": "https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js",
+                    "integrity": "sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo",
+                    "crossorgin": "anonymous",
+                },
+            ]
+        )
+
+        # Bootstrap JS
+        body.append(
+            [
+                "script",
+                {
+                    "src": "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js",
+                    "integrity": "sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6",
+                    "crossorigin": "anonymous",
+                },
+            ]
+        )
+
+        # Typeahead
+        body.append(
+            [
+                "script",
+                {
+                    "type": "text/javascript",
+                    "src": "https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js",
+                },
+            ]
+        )
+
+    # Custom JS for show more children
+    js = """function show_children() {
         hidden = $('#children li:hidden').slice(0, 100);
         if (hidden.length > 1) {
             hidden.show();
@@ -539,8 +716,104 @@ def terms2rdfa(cur, treename, term_ids, include_db=False):
             console.log("DONE");
         }
         $('#more').hide();
-    }""",
-        ]
+    }"""
+
+    # Custom JS for search bar using Typeahead
+    if include_search:
+        add_query = ""
+        remote = "'?text=%QUERY&format=json'"
+        if include_db:
+            # Add tree name to query params
+            add_query = f'str.push("db={treename}");'
+            remote = f"'?db={treename}&text=%QUERY&format=json'"
+        js += (
+            """$('#search-form').submit(function () {
+        $(this)
+            .find('input[name]')
+            .filter(function () {
+                return !this.value;
+            })
+            .prop('name', '');
+    });
+    function jump(currentPage) {
+      newPage = prompt("Jump to page", currentPage);
+      if (newPage) {
+        href = window.location.href.replace("page="+currentPage, "page="+newPage);
+        window.location.href = href
+      }
+    };
+    function configure_typeahead(node) {
+      if (!node.id || !node.id.endsWith("-typeahead")) {
+        return;
+      }
+      table = node.id.replace("-typeahead", "")
+      var bloodhound = new Bloodhound({
+        datumTokenizer: Bloodhound.tokenizers.obj.nonword('display_name'),
+        queryTokenizer: Bloodhound.tokenizers.nonword,
+        sorter: function(a, b) {
+          A = a['display_name'].length;
+          B = b['display_name'].length;
+          if (A < B) {
+             return -1;
+          }
+          else if (A > B) {
+             return 1;
+          }
+          else return 0;
+        },
+        remote: {
+          url: """ + remote + """,
+          wildcard: '%QUERY',
+          transform : function(response) {
+              return bloodhound.sorter(response)
+          }
+        }
+      });
+      $(node).typeahead({
+        minLength: 0,
+        hint: false,
+        highlight: true
+      }, {
+        name: table,
+        source: bloodhound,
+        display: 'display_name',
+        limit: 40
+      });
+      $(node).bind('click', function(e) {
+        $(node).select();
+      });
+      $(node).bind('typeahead:select', function(ev, suggestion) {
+        $(node).prev().val(suggestion['value']);
+        go(table, suggestion['value'])
+      });
+      $(node).bind('keypress',function(e) {
+        if(e.which == 13) {
+          go(table, $('#' + table + '-hidden').val());
+        }
+      });
+    };
+    $('.typeahead').each(function() { configure_typeahead(this); });
+    function go(table, value) {
+      q = {}
+      table = table.replace('_all', '');
+      q[table] = value
+      window.location = "?" + query(q);
+    };
+    function query(obj) {
+      var str = [];
+      for (var p in obj)
+        if (obj.hasOwnProperty(p)) {
+          str.push("id=" + encodeURIComponent(obj[p]));
+        }
+      """
+            + add_query
+            + """
+      return str.join("&");
+    }"""
+        )
+
+    body.append(
+        ["script", {"type": "text/javascript"}, js,]
     )
     html = ["html", head, body]
 
