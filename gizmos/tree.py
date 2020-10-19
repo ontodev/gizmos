@@ -57,9 +57,7 @@ def tree(db, term, include_db=False, include_search=False):
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(
-            terms2rdfa(
-                cur, treename, term, include_db=include_db, include_search=include_search
-            )
+            terms2rdfa(cur, treename, term, include_db=include_db, include_search=include_search)
         )
 
 
@@ -275,7 +273,8 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
             FROM statements
             WHERE stanza in ('{ids}')
               AND predicate='owl:deprecated'
-              AND value='true'""")
+              AND value='true'"""
+    )
     for row in cur:
         obsolete.append(row["subject"])
 
@@ -314,7 +313,6 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
     annotations = {}
-    row = None
     for row in stanza:
         subject = row["subject"]
         if subject not in annotation_bnodes:
@@ -339,22 +337,9 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
         else:
             annotations[subject]["rows"].append(row)
 
-    # Note that in python, a variable `foo` declared in the scope of a for loop is available to
-    # be referred to _after_ the end of the for loop. For example, the following works in python:
-    # for foo in myList:
-    #   ...
-    # ...
-    # print(foo)
-    #
-    # The variable `row` below is the last `row` retrieved from the immediately preceeding for loop.
-    if row:
-        subject = row["subject"]
-        si = curie2iri(prefixes, subject)
-        subject_label = label
-    else:
-        subject = term_id
-        si = curie2iri(prefixes, subject)
-        subject_label = label
+    subject = term_id
+    si = curie2iri(prefixes, subject)
+    subject_label = label
 
     # The initial hiccup, which will be filled in later:
     items = ["ul", {"id": "annotations", "class": "col-md"}]
@@ -762,7 +747,9 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
           else return 0;
         },
         remote: {
-          url: """ + remote + """,
+          url: """
+            + remote
+            + """,
           wildcard: '%QUERY',
           transform : function(response) {
               return bloodhound.sorter(response)
@@ -834,7 +821,8 @@ def tree_label(data, treename, s):
 
 def row2o(_stanza, _data, _uber_row):
     """Given a stanza, a map (`_data`) with entries for the tree structure of the stanza and for all
-    of the labels in it, and a row in the stanza, convert the row to hiccup-style HTML."""
+    of the labels in it, and a row in the stanza, convert the object or value of the row to
+    hiccup-style HTML."""
 
     def renderNonBlank(given_row):
         """Renders the non-blank object from the given row"""
@@ -1053,14 +1041,6 @@ def row2o(_stanza, _data, _uber_row):
     uber_obj = _uber_row["object"]
     LOGGER.debug(f"Called row2o on <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>")
 
-    # Here, we expect "outer rows" only, i.e., rows that have non-blank nodes as their subject. The
-    # inner functions above will handle rows with blank subjects. This means that the check below
-    # shouldn't really be necessary, since the caller should not send us an input row with a blank
-    # subject, but we double-check anyway:
-    if uber_subj.startswith("_:"):
-        LOGGER.error("Received row with blank subject in row2o; returning empty div")
-        return ["div"]
-
     if not isinstance(uber_obj, str):
         if _uber_row["value"]:
             LOGGER.debug("Rendering non-string object with value: {}".format(_uber_row["value"]))
@@ -1101,10 +1081,10 @@ def row2o(_stanza, _data, _uber_row):
 
 
 def row2po(stanza, data, row, db):
-    """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
+    """Convert a predicate and object/value from a sqlite query result row to hiccup-style HTML."""
     predicate = row["predicate"]
     predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2href(predicate, db)}, predicate_label]
+    p = ["b", ["a", {"href": curie2href(predicate, db)}, predicate_label]]
     o = row2o(stanza, data, row)
     return [p, o]
 
