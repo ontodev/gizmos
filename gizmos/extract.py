@@ -112,7 +112,7 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
             # Insert all annotations
             cur.execute(
                 """
-                    INSERT INTO tmp.predicates
+                    INSERT OR IGNORE INTO tmp.predicates
                     SELECT DISTINCT subject
                     FROM statements
                     WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty'"""
