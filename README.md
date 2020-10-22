@@ -49,7 +49,7 @@ python3 -m gizmos.tree foo.db foo:123 -a rdfs:label -a rdfs:comment > bar.html
 
 You can also pass a text file containing a list of annotation property CURIEs (one per line) using `-A`/`--annotations`:
 ```
-python3 -m gizmos.tree foo.db foo:123 -a annotations.txt > bar.html
+python3 -m gizmos.tree foo.db foo:123 -A annotations.txt > bar.html
 ```
 
 You can specify to include the remaining annotation properties in a text file with `*`. The `*` can appear anywhere in the list, so you can choose to include certain properites last:
