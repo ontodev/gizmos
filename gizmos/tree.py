@@ -92,7 +92,7 @@ def tree(
             cur,
             treename,
             term,
-            annotation_ids,
+            annotation_ids=annotation_ids,
             include_all_annotations=include_all_annotations,
             include_db=include_db,
             include_search=include_search,
@@ -457,11 +457,19 @@ def term2rdfa(
     for row in stanza:
         if row["subject"] == term_id:
             s2[row["predicate"]].append(row)
+    pcs = list(s2.keys())
+
+    # Append all non-annotation property predicates
+    cur.execute(
+        """
+        SELECT subject FROM statements
+        WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty'"""
+    )
+    all_annotation_ids = [x["subject"] for x in cur.fetchall()]
+    property_ids = annotation_ids + [x for x in pcs if x not in all_annotation_ids]
 
     # Loop through the rows of the stanza that correspond to the predicates of the given term:
-    pcs = list(s2.keys())
-    pcs.sort()
-    for predicate in annotation_ids:
+    for predicate in property_ids:
         if predicate not in pcs:
             continue
         anchor = [
@@ -499,7 +507,7 @@ def term2rdfa(
     return ps, term
 
 
-def thing2rdfa(cur, all_prefixes, treename, annotation_ids, include_db=False):
+def thing2rdfa(cur, all_prefixes, treename, property_ids, include_db=False):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     cur.execute(
@@ -534,7 +542,7 @@ def thing2rdfa(cur, all_prefixes, treename, annotation_ids, include_db=False):
         treename,
         stanza,
         "owl:Thing",
-        annotation_ids,
+        property_ids,
         include_db=include_db,
         add_children=add_children,
     )
@@ -544,7 +552,7 @@ def terms2rdfa(
     cur,
     treename,
     term_ids,
-    annotation_ids,
+    annotation_ids=None,
     include_all_annotations=False,
     include_db=False,
     include_search=False,
@@ -554,18 +562,6 @@ def terms2rdfa(
     # Get the prefixes
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
     all_prefixes = [(x["prefix"], x["base"]) for x in cur.fetchall()]
-
-    # If no annotations were provided, get all annotation property IDs
-    if not annotation_ids:
-        cur.execute(
-            """
-            SELECT DISTINCT s1.subject AS s FROM statements s1
-            JOIN statements s2 ON s1.subject = s2.subject
-            WHERE s1.predicate = 'rdf:type' AND s1.object = 'owl:AnnotationProperty'
-            AND s2.predicate = 'rdfs:label'
-            ORDER BY s2.value COLLATE NOCASE ASC"""
-        )
-        annotation_ids = [x["s"] for x in cur.fetchall()]
 
     ps = set()
     terms = []
@@ -623,6 +619,17 @@ def terms2rdfa(
                         ORDER BY s2.value COLLATE NOCASE ASC"""
                     )
                     annotation_ids.extend([x["s"] for x in cur.fetchall()])
+                else:
+                    # If no annotations were provided, get all annotation property IDs
+                    cur.execute(
+                        """
+                        SELECT DISTINCT s1.subject AS s FROM statements s1
+                        JOIN statements s2 ON s1.subject = s2.subject
+                        WHERE s1.predicate = 'rdf:type' AND s1.object = 'owl:AnnotationProperty'
+                        AND s2.predicate = 'rdfs:label'
+                        ORDER BY s2.value COLLATE NOCASE ASC"""
+                    )
+                    annotation_ids = [x["s"] for x in cur.fetchall()]
             p, t = term2rdfa(
                 cur, all_prefixes, treename, stanza, term_id, annotation_ids, include_db=include_db
             )
