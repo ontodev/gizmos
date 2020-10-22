@@ -102,7 +102,7 @@ def escape_qnames(cur):
             curie = row[keyword]
             prefix = curie.split(":")[0]
             local_id = curie.split(":")[1]
-            local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", "\\\1", local_id)
+            local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
             if local_id != local_id_fixed:
                 updates[curie] = f"{prefix}:{local_id_fixed}"
 
