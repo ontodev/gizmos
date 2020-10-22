@@ -33,13 +33,11 @@ def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
-    p.add_argument("-a", "--annotations", help="File containing annotation properties to include")
     p.add_argument(
-        "-A",
-        "--include-all-annotations",
-        help="If provided with an annotations file, "
-        "include all additional annotation properties after the listed properties",
-        action="store_true",
+        "-a", "--annotation", action="append", help="CURIE of annotation property to include"
+    )
+    p.add_argument(
+        "-A", "--annotations", help="File containing CURIEs of annotation properties to include"
     )
     p.add_argument(
         "-d",
@@ -53,10 +51,10 @@ def main():
     args = p.parse_args()
 
     # Maybe get annotation properties to include
-    annotation_ids = None
+    annotation_ids = args.annotation or []
     if args.annotations:
         with open(args.annotations, "r") as f:
-            annotation_ids = [x.strip() for x in f.readlines()]
+            annotation_ids.extend([x.strip() for x in f.readlines()])
 
     # Run tree and write HTML to stdout
     sys.stdout.write(
@@ -64,7 +62,6 @@ def main():
             args.db,
             args.term,
             annotation_ids=annotation_ids,
-            include_all_annotations=args.include_all_annotations,
             include_db=args.include_db,
             include_search=args.include_search,
         )
@@ -72,12 +69,7 @@ def main():
 
 
 def tree(
-    db,
-    term,
-    annotation_ids=None,
-    include_all_annotations=False,
-    include_db=False,
-    include_search=False,
+    db, term, annotation_ids=None, include_db=False, include_search=False,
 ):
     treename = os.path.splitext(os.path.basename(db))[0]
     if term:
@@ -93,7 +85,6 @@ def tree(
             treename,
             term,
             annotation_ids=annotation_ids,
-            include_all_annotations=include_all_annotations,
             include_db=include_db,
             include_search=include_search,
         )
@@ -549,13 +540,7 @@ def thing2rdfa(cur, all_prefixes, treename, property_ids, include_db=False):
 
 
 def terms2rdfa(
-    cur,
-    treename,
-    term_ids,
-    annotation_ids=None,
-    include_all_annotations=False,
-    include_db=False,
-    include_search=False,
+    cur, treename, term_ids, annotation_ids=None, include_db=False, include_search=False,
 ):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
@@ -580,10 +565,26 @@ def terms2rdfa(
             ps.update(p)
             terms.append(t)
 
+    # Maybe find a * in the IDs that represents all remaining annotation properties
+    annotation_ids_split = None
+    if "*" in annotation_ids:
+        before = []
+        after = []
+        found = False
+        for ann_id in annotation_ids:
+            if ann_id == "*":
+                found = True
+                continue
+            if not found:
+                before.append(ann_id)
+            else:
+                after.append(ann_id)
+        annotation_ids_split = [before, after]
+
     # Run for given terms if terms have not yet been filled out
     if not terms:
         for term_id in term_ids:
-            if annotation_ids and not include_all_annotations:
+            if annotation_ids and not annotation_ids_split:
                 # First get all non-annotation axioms
                 cur.execute(
                     f"""
@@ -607,7 +608,8 @@ def terms2rdfa(
                 cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
                 stanza = cur.fetchall()
                 if annotation_ids:
-                    # If some IDs were provided, append the remaining annotation properties
+                    # If some IDs were provided with *, add the remaining annotation properties
+                    # These properties go in between the before & after defined in the split
                     predicates = ", ".join([f"'{x}'" for x in annotation_ids])
                     cur.execute(
                         f"""
@@ -618,7 +620,11 @@ def terms2rdfa(
                           AND s2.predicate = 'rdfs:label'
                         ORDER BY s2.value COLLATE NOCASE ASC"""
                     )
+
+                    # Separate before & after with the remaining properties
+                    annotation_ids = annotation_ids_split[0]
                     annotation_ids.extend([x["s"] for x in cur.fetchall()])
+                    annotation_ids.extend(annotation_ids_split[1])
                 else:
                     # If no annotations were provided, get all annotation property IDs
                     cur.execute(

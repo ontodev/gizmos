@@ -40,14 +40,28 @@ If you provide the `-s`/`--include-search` flag, a search bar will be included i
 
 #### Annotations
 
-When displaying the details for a term, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. If you want to only include a subset of annotation properites, you can pass a text file containing the annotation property IDs (one per line) in the order you want using `-a`/`--annotations`:
+When displaying a term, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. You can define which annotations to include with the `-a`/`--annotation` and `-A`/`--annotations` options.
+
+You can pass one or more annotation property CURIEs in the command line using `-a`/`--annotation`. These will appear in the order that you pass:
+```
+python3 -m gizmos.tree foo.db foo:123 -a rdfs:label -a rdfs:comment > bar.html
+```
+
+You can also pass a text file containing a list of annotation property CURIEs (one per line) using `-A`/`--annotations`:
 ```
 python3 -m gizmos.tree foo.db foo:123 -a annotations.txt > bar.html
 ```
 
-If you wish to order a selection of annotation properties at the beginning of the list and still include the others after the priority annotations, you can include the annotations text file and the `-A`/`--include-all-annotations` flag:
+You can specify to include the remaining annotation properties in a text file with `*`. The `*` can appear anywhere in the list, so you can choose to include certain properites last:
 ```
-python3 -m gizmos.tree foo.db foo:123 -a annotations.txt -A > bar.html
+rdfs:label
+*
+rdfs:comment
+```
+
+The `*` character also works on the command line, but must be enclosed in quotes:
+```
+python3 -m gizmos.tree foo.db foo:123 -a rdfs:label -a "*" > bar.html
 ```
 
 #### CGI Script Example
