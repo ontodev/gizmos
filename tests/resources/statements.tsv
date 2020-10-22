@@ -130,6 +130,7 @@ BFO:0000001	BFO:0000001	BFO:0000179		entity
 BFO:0000001	BFO:0000001	owl:disjointWith	oio:ObsoleteClass			
 BFO:0000001	BFO:0000001	rdfs:subClassOf	owl:Thing			
 BFO:0000001	BFO:0000001	rdf:type	owl:Class			
+BFO:0000001	BFO:0000001	IAO:0010000	obo:bfo/axiom/0000004			
 BFO:0000001	_:riog00000256	rdfs:seeAlso	<http://www.referent-tracking.com/_RTU/papers/CeustersICbookRevised.pdf>			
 BFO:0000001	_:riog00000256	rdfs:comment		per discussion with Barry Smith		
 BFO:0000001	_:riog00000256	IAO:0010000	obo:bfo/axiom/0000004			
