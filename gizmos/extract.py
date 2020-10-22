@@ -88,26 +88,24 @@ def dict_factory(cursor, row):
     return d
 
 
+def escape(curie):
+    """Escape illegal characters in the local ID portion of a CURIE"""
+    prefix = curie.split(":")[0]
+    local_id = curie.split(":")[1]
+    local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
+    return f"{prefix}:{local_id_fixed}"
+
+
 def escape_qnames(cur):
-    """Find CURIEs with illegal QName characters in the local ID and escape those characters."""
+    """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
     for keyword in ["stanza", "subject", "predicate", "object"]:
         cur.execute(
             f"""
-            SELECT DISTINCT {keyword} FROM tmp.extract
-            WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:'"""
+            UPDATE tmp.extract SET {keyword} = esc({keyword})
+            WHERE {keyword} IN
+              (SELECT DISTINCT {keyword}
+               FROM tmp.extract WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%');"""
         )
-        res = cur.fetchall()
-        updates = {}
-        for row in res:
-            curie = row[keyword]
-            prefix = curie.split(":")[0]
-            local_id = curie.split(":")[1]
-            local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
-            if local_id != local_id_fixed:
-                updates[curie] = f"{prefix}:{local_id_fixed}"
-
-        for old, new in updates.items():
-            cur.execute(f"UPDATE tmp.extract SET {keyword} = '{new}' WHERE {keyword} = '{old}'")
 
 
 def extract_terms(database, terms, annotations, no_hierarchy=False):
@@ -182,6 +180,8 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
                   AND predicate IN (SELECT predicate FROM predicates)"""
         )
 
+        # Create esc function
+        conn.create_function("esc", 1, escape)
         escape_qnames(cur)
 
         # Reset row factory
