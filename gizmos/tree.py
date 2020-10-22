@@ -5,6 +5,8 @@ import os
 import sqlite3
 import sys
 
+import json
+
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import curie2href, render
@@ -59,6 +61,40 @@ def tree(db, term, include_db=False, include_search=False):
         sys.stdout.write(
             terms2rdfa(cur, treename, term, include_db=include_db, include_search=include_search)
         )
+
+
+def build_nested(data, spv2annotation, labels, db, source, row, ele):
+    """Build a nested hiccup list of axiom annotations."""
+    predicate = row["predicate"]
+    if source in spv2annotation:
+        annotated_predicates = spv2annotation[source]
+        if predicate in annotated_predicates:
+            annotated_values = annotated_predicates[predicate]
+            target = row.get("object", None) or row.get("value", None)
+            if target in annotated_values:
+                ax_annotations = annotated_values[target]
+                for ann_predicate, ann_rows in ax_annotations.items():
+                    # Build the nested list "anchor" (predicate)
+                    anchor = [
+                        "li",
+                        [
+                            "small",
+                            [
+                                "a",
+                                {"href": curie2href(ann_predicate, db)},
+                                labels.get(ann_predicate, ann_predicate),
+                            ],
+                        ],
+                    ]
+
+                    # Collect the axiom annotation objects/values
+                    ax_os = []
+                    for ar in ann_rows:
+                        ax_os.append(["li", ["small", row2o([], data, ar)]])
+                        build_nested(data, spv2annotation, labels, db, ar["subject"], ar, ax_os)
+                    ele.append(["ul", anchor, ["ul"] + ax_os])
+
+    return ele
 
 
 def curie2iri(prefixes, curie):
@@ -307,8 +343,9 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     # The subjects in the stanza that are of type owl:Axiom:
     annotation_bnodes = set()
     for row in stanza:
-        if row["predicate"] == "rdf:type" and row["object"] == "owl:Axiom":
-            annotation_bnodes.add(row["subject"])
+        subject = row["subject"]
+        if subject.startswith("_:"):
+            annotation_bnodes.add(subject)
 
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
@@ -317,25 +354,61 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
         subject = row["subject"]
         if subject not in annotation_bnodes:
             continue
-        if subject not in annotations:
-            annotations[subject] = {"row": {"stanza": row["stanza"]}, "rows": []}
+
+        if subject in annotations:
+            details = annotations[subject]
+        else:
+            details = {}
+
         predicate = row["predicate"]
+        obj = row["object"]
+        value = row["value"]
         if predicate == "rdf:type":
             continue
         elif predicate == "owl:annotatedSource":
-            annotations[subject]["row"]["subject"] = row["object"]
-            annotations[subject]["source"] = row
+            details["source"] = obj
         elif predicate == "owl:annotatedProperty":
-            annotations[subject]["row"]["predicate"] = row["object"]
-            annotations[subject]["property"] = row
+            details["predicate"] = obj
         elif predicate == "owl:annotatedTarget":
-            annotations[subject]["row"]["object"] = row["object"]
-            annotations[subject]["row"]["value"] = row["value"]
-            annotations[subject]["row"]["datatype"] = row["datatype"]
-            annotations[subject]["row"]["language"] = row["language"]
-            annotations[subject]["target"] = row
+            if obj:
+                details["target_object"] = obj
+            if value:
+                details["target_value"] = value
         else:
-            annotations[subject]["rows"].append(row)
+            details["annotation"] = row
+
+        annotations[subject] = details
+
+    spv2annotation = {}
+    for bnode, details in annotations.items():
+        source = details["source"]
+        predicate = details["predicate"]
+        target = details.get("target_object", None) or details.get("target_value", None)
+        annotation = details["annotation"]
+        if source in spv2annotation:
+            pred2val = spv2annotation[source]
+        else:
+            pred2val = {}
+        if predicate in pred2val:
+            values = pred2val[predicate]
+        else:
+            values = {}
+        if target in values:
+            ax_annotations = values[target]
+        else:
+            ax_annotations = {}
+
+        ann_predicate = annotation["predicate"]
+        if ann_predicate in ax_annotations:
+            anns = ax_annotations[ann_predicate]
+        else:
+            anns = []
+        anns.append(annotation)
+
+        ax_annotations[ann_predicate] = anns
+        values[target] = ax_annotations
+        pred2val[predicate] = values
+        spv2annotation[source] = pred2val
 
     subject = term_id
     si = curie2iri(prefixes, subject)
@@ -367,30 +440,11 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
             # corresponding to all of the curies in the stanza, into a hiccup object `o`:
             o = ["li", row2o(stanza, data, row)]
 
-            # Render the annotations for the current row:
-            for key, ann in annotations.items():
-                if row != ann["row"]:
-                    continue
-                # Use the data map and the annotations rows to generate some hiccup for the
-                # annotations, which we then append to our `o`:
-                ul = ["ul"]
-                for a in ann["rows"]:
-                    ul.append(["li"] + row2po(stanza, data, a, db))
-                o.append(
-                    [
-                        "small",
-                        {"resource": key},
-                        [
-                            "div",
-                            {"hidden": "true"},
-                            row2o(stanza, data, ann["source"]),
-                            row2o(stanza, data, ann["property"]),
-                            row2o(stanza, data, ann["target"]),
-                        ],
-                        ul,
-                    ]
-                )
-                break
+            # Check for axiom annotations and create nested
+            nest = build_nested(data, spv2annotation, labels, db, term_id, row, [])
+            if nest:
+                o += nest
+
             # Append the `o` to the list of `os`:
             os.append(o)
         if os:
