@@ -38,6 +38,19 @@ This can be useful when writing scripts that return trees from different databas
 
 If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
 
+#### Annotations
+
+When displaying the details for a term, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. If you want to only include a subset of annotation properites, you can pass a text file containing the annotation property IDs (one per line) in the order you want using `-a`/`--annotations`:
+```
+python3 -m gizmos.tree foo.db foo:123 -a annotations.txt > bar.html
+```
+
+If you wish to order a selection of annotation properties at the beginning of the list and still include the others after the priority annotations, you can include the annotations text file and the `-A`/`--include-all-annotations` flag:
+```
+python3 -m gizmos.tree foo.db foo:123 -a annotations.txt -A > bar.html
+```
+
+
 #### CGI Script Example
 
 A simple, single-database setup. Note that `foo.db` must exist.
