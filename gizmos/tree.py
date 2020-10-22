@@ -5,9 +5,6 @@ import os
 import sqlite3
 import sys
 
-import json
-import warnings
-
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import curie2href, render
@@ -1129,15 +1126,6 @@ def row2o(_stanza, _data, _uber_row):
             f"Rendering non-blank triple: <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>"
         )
         return renderNonBlank(_uber_row)
-
-
-def row2po(stanza, data, row, db):
-    """Convert a predicate and object/value from a sqlite query result row to hiccup-style HTML."""
-    predicate = row["predicate"]
-    predicate_label = data["labels"].get(predicate, predicate)
-    p = ["b", ["a", {"href": curie2href(predicate, db)}, predicate_label]]
-    o = row2o(stanza, data, row)
-    return [p, o]
 
 
 if __name__ == "__main__":
