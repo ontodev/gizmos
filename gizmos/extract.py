@@ -1,4 +1,5 @@
 import logging
+import re
 import sqlite3
 import sys
 
@@ -87,6 +88,26 @@ def dict_factory(cursor, row):
     return d
 
 
+def escape(curie):
+    """Escape illegal characters in the local ID portion of a CURIE"""
+    prefix = curie.split(":")[0]
+    local_id = curie.split(":")[1]
+    local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
+    return f"{prefix}:{local_id_fixed}"
+
+
+def escape_qnames(cur):
+    """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
+    for keyword in ["stanza", "subject", "predicate", "object"]:
+        cur.execute(
+            f"""
+            UPDATE tmp.extract SET {keyword} = esc({keyword})
+            WHERE {keyword} IN
+              (SELECT DISTINCT {keyword}
+               FROM tmp.extract WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%');"""
+        )
+
+
 def extract_terms(database, terms, annotations, no_hierarchy=False):
     """Extract terms from the ontology database and return the module as lines of Turtle."""
 
@@ -158,6 +179,10 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
                 WHERE subject IN (SELECT DISTINCT parent FROM terms)
                   AND predicate IN (SELECT predicate FROM predicates)"""
         )
+
+        # Create esc function
+        conn.create_function("esc", 1, escape)
+        escape_qnames(cur)
 
         # Reset row factory
         conn.row_factory = sqlite3.Row
