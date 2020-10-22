@@ -127,9 +127,19 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
 
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
         cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
-        cur.executemany(
-            "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations]
-        )
+        if annotations:
+            cur.executemany(
+                "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations]
+            )
+        else:
+            # Insert all annotations
+            cur.execute(
+                """
+                    INSERT OR IGNORE INTO tmp.predicates
+                    SELECT DISTINCT subject
+                    FROM statements
+                    WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty'"""
+            )
         if not no_hierarchy:
             cur.execute(
                 """

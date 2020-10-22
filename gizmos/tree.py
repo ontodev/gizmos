@@ -57,10 +57,42 @@ def tree(db, term, include_db=False, include_search=False):
         conn.row_factory = dict_factory
         cur = conn.cursor()
         sys.stdout.write(
-            terms2rdfa(
-                cur, treename, term, include_db=include_db, include_search=include_search
-            )
+            terms2rdfa(cur, treename, term, include_db=include_db, include_search=include_search)
         )
+
+
+def build_nested(data, spv2annotation, labels, db, source, row, ele):
+    """Build a nested hiccup list of axiom annotations."""
+    predicate = row["predicate"]
+    if source in spv2annotation:
+        annotated_predicates = spv2annotation[source]
+        if predicate in annotated_predicates:
+            annotated_values = annotated_predicates[predicate]
+            target = row.get("object", None) or row.get("value", None)
+            if target in annotated_values:
+                ax_annotations = annotated_values[target]
+                for ann_predicate, ann_rows in ax_annotations.items():
+                    # Build the nested list "anchor" (predicate)
+                    anchor = [
+                        "li",
+                        [
+                            "small",
+                            [
+                                "a",
+                                {"href": curie2href(ann_predicate, db)},
+                                labels.get(ann_predicate, ann_predicate),
+                            ],
+                        ],
+                    ]
+
+                    # Collect the axiom annotation objects/values
+                    ax_os = []
+                    for ar in ann_rows:
+                        ax_os.append(["li", ["small", row2o([], data, ar)]])
+                        build_nested(data, spv2annotation, labels, db, ar["subject"], ar, ax_os)
+                    ele.append(["ul", anchor, ["ul"] + ax_os])
+
+    return ele
 
 
 def curie2iri(prefixes, curie):
@@ -275,7 +307,8 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
             FROM statements
             WHERE stanza in ('{ids}')
               AND predicate='owl:deprecated'
-              AND value='true'""")
+              AND value='true'"""
+    )
     for row in cur:
         obsolete.append(row["subject"])
 
@@ -308,53 +341,72 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     # The subjects in the stanza that are of type owl:Axiom:
     annotation_bnodes = set()
     for row in stanza:
-        if row["predicate"] == "rdf:type" and row["object"] == "owl:Axiom":
+        if row["predicate"] == "owl:annotatedSource":
             annotation_bnodes.add(row["subject"])
 
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
     annotations = {}
-    row = None
     for row in stanza:
         subject = row["subject"]
         if subject not in annotation_bnodes:
             continue
-        if subject not in annotations:
-            annotations[subject] = {"row": {"stanza": row["stanza"]}, "rows": []}
+        if subject in annotations:
+            details = annotations[subject]
+        else:
+            details = {}
         predicate = row["predicate"]
+        obj = row["object"]
+        value = row["value"]
         if predicate == "rdf:type":
             continue
         elif predicate == "owl:annotatedSource":
-            annotations[subject]["row"]["subject"] = row["object"]
-            annotations[subject]["source"] = row
+            details["source"] = obj
         elif predicate == "owl:annotatedProperty":
-            annotations[subject]["row"]["predicate"] = row["object"]
-            annotations[subject]["property"] = row
+            details["predicate"] = obj
         elif predicate == "owl:annotatedTarget":
-            annotations[subject]["row"]["object"] = row["object"]
-            annotations[subject]["row"]["value"] = row["value"]
-            annotations[subject]["row"]["datatype"] = row["datatype"]
-            annotations[subject]["row"]["language"] = row["language"]
-            annotations[subject]["target"] = row
+            if obj:
+                details["target_object"] = obj
+            if value:
+                details["target_value"] = value
         else:
-            annotations[subject]["rows"].append(row)
+            details["annotation"] = row
+        annotations[subject] = details
 
-    # Note that in python, a variable `foo` declared in the scope of a for loop is available to
-    # be referred to _after_ the end of the for loop. For example, the following works in python:
-    # for foo in myList:
-    #   ...
-    # ...
-    # print(foo)
-    #
-    # The variable `row` below is the last `row` retrieved from the immediately preceeding for loop.
-    if row:
-        subject = row["subject"]
-        si = curie2iri(prefixes, subject)
-        subject_label = label
-    else:
-        subject = term_id
-        si = curie2iri(prefixes, subject)
-        subject_label = label
+    spv2annotation = {}
+    for bnode, details in annotations.items():
+        source = details["source"]
+        predicate = details["predicate"]
+        target = details.get("target_object", None) or details.get("target_value", None)
+        annotation = details["annotation"]
+        if source in spv2annotation:
+            pred2val = spv2annotation[source]
+        else:
+            pred2val = {}
+        if predicate in pred2val:
+            values = pred2val[predicate]
+        else:
+            values = {}
+        if target in values:
+            ax_annotations = values[target]
+        else:
+            ax_annotations = {}
+
+        ann_predicate = annotation["predicate"]
+        if ann_predicate in ax_annotations:
+            anns = ax_annotations[ann_predicate]
+        else:
+            anns = []
+        anns.append(annotation)
+
+        ax_annotations[ann_predicate] = anns
+        values[target] = ax_annotations
+        pred2val[predicate] = values
+        spv2annotation[source] = pred2val
+
+    subject = term_id
+    si = curie2iri(prefixes, subject)
+    subject_label = label
 
     # The initial hiccup, which will be filled in later:
     items = ["ul", {"id": "annotations", "class": "col-md"}]
@@ -382,30 +434,11 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
             # corresponding to all of the curies in the stanza, into a hiccup object `o`:
             o = ["li", row2o(stanza, data, row)]
 
-            # Render the annotations for the current row:
-            for key, ann in annotations.items():
-                if row != ann["row"]:
-                    continue
-                # Use the data map and the annotations rows to generate some hiccup for the
-                # annotations, which we then append to our `o`:
-                ul = ["ul"]
-                for a in ann["rows"]:
-                    ul.append(["li"] + row2po(stanza, data, a, db))
-                o.append(
-                    [
-                        "small",
-                        {"resource": key},
-                        [
-                            "div",
-                            {"hidden": "true"},
-                            row2o(stanza, data, ann["source"]),
-                            row2o(stanza, data, ann["property"]),
-                            row2o(stanza, data, ann["target"]),
-                        ],
-                        ul,
-                    ]
-                )
-                break
+            # Check for axiom annotations and create nested
+            nest = build_nested(data, spv2annotation, labels, db, term_id, row, [])
+            if nest:
+                o += nest
+
             # Append the `o` to the list of `os`:
             os.append(o)
         if os:
@@ -762,7 +795,9 @@ def terms2rdfa(cur, treename, term_ids, include_db=False, include_search=False):
           else return 0;
         },
         remote: {
-          url: """ + remote + """,
+          url: """
+            + remote
+            + """,
           wildcard: '%QUERY',
           transform : function(response) {
               return bloodhound.sorter(response)
@@ -834,7 +869,8 @@ def tree_label(data, treename, s):
 
 def row2o(_stanza, _data, _uber_row):
     """Given a stanza, a map (`_data`) with entries for the tree structure of the stanza and for all
-    of the labels in it, and a row in the stanza, convert the row to hiccup-style HTML."""
+    of the labels in it, and a row in the stanza, convert the object or value of the row to
+    hiccup-style HTML."""
 
     def renderNonBlank(given_row):
         """Renders the non-blank object from the given row"""
@@ -1053,14 +1089,6 @@ def row2o(_stanza, _data, _uber_row):
     uber_obj = _uber_row["object"]
     LOGGER.debug(f"Called row2o on <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>")
 
-    # Here, we expect "outer rows" only, i.e., rows that have non-blank nodes as their subject. The
-    # inner functions above will handle rows with blank subjects. This means that the check below
-    # shouldn't really be necessary, since the caller should not send us an input row with a blank
-    # subject, but we double-check anyway:
-    if uber_subj.startswith("_:"):
-        LOGGER.error("Received row with blank subject in row2o; returning empty div")
-        return ["div"]
-
     if not isinstance(uber_obj, str):
         if _uber_row["value"]:
             LOGGER.debug("Rendering non-string object with value: {}".format(_uber_row["value"]))
@@ -1098,15 +1126,6 @@ def row2o(_stanza, _data, _uber_row):
             f"Rendering non-blank triple: <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>"
         )
         return renderNonBlank(_uber_row)
-
-
-def row2po(stanza, data, row, db):
-    """Convert a predicate and object from a sqlite query result row to hiccup-style HTML."""
-    predicate = row["predicate"]
-    predicate_label = data["labels"].get(predicate, predicate)
-    p = ["a", {"href": curie2href(predicate, db)}, predicate_label]
-    o = row2o(stanza, data, row)
-    return [p, o]
 
 
 if __name__ == "__main__":
