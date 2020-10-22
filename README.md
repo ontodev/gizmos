@@ -50,7 +50,6 @@ If you wish to order a selection of annotation properties at the beginning of th
 python3 -m gizmos.tree foo.db foo:123 -a annotations.txt -A > bar.html
 ```
 
-
 #### CGI Script Example
 
 A simple, single-database setup. Note that `foo.db` must exist.
