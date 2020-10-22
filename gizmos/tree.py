@@ -6,6 +6,7 @@ import sqlite3
 import sys
 
 import json
+import warnings
 
 from argparse import ArgumentParser
 from collections import defaultdict
@@ -343,9 +344,8 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
     # The subjects in the stanza that are of type owl:Axiom:
     annotation_bnodes = set()
     for row in stanza:
-        subject = row["subject"]
-        if subject.startswith("_:"):
-            annotation_bnodes.add(subject)
+        if row["predicate"] == "owl:annotatedSource":
+            annotation_bnodes.add(row["subject"])
 
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
@@ -354,12 +354,10 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
         subject = row["subject"]
         if subject not in annotation_bnodes:
             continue
-
         if subject in annotations:
             details = annotations[subject]
         else:
             details = {}
-
         predicate = row["predicate"]
         obj = row["object"]
         value = row["value"]
@@ -376,7 +374,6 @@ def term2rdfa(cur, prefixes, treename, stanza, term_id, include_db=False, add_ch
                 details["target_value"] = value
         else:
             details["annotation"] = row
-
         annotations[subject] = details
 
     spv2annotation = {}
