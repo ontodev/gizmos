@@ -9,11 +9,11 @@ from rdflib import Graph
 from util import test_db, create_db, compare_graphs
 
 
-def check_term(term):
+def check_term(term, annotations):
     with sqlite3.connect(test_db) as conn:
         conn.row_factory = gizmos.tree.dict_factory
         cur = conn.cursor()
-        html = gizmos.tree.terms2rdfa(cur, "obi", [term])
+        html = gizmos.tree.terms2rdfa(cur, "obi", [term], annotation_ids=annotations)
 
     # Create the DOM document element
     parser = html5lib.HTMLParser(tree=html5lib.treebuilders.getTreeBuilder("dom"))
@@ -45,12 +45,16 @@ def check_term(term):
     parse_one_node(top, actual, None, state, [])
 
     expected = Graph()
-    expected.parse(f"tests/resources/obi-tree-{term}.ttl", format="turtle")
+    if annotations:
+        expected.parse(f"tests/resources/obi-tree-{term}-annotations.ttl", format="turtle")
+    else:
+        expected.parse(f"tests/resources/obi-tree-{term}.ttl", format="turtle")
 
     compare_graphs(actual, expected)
 
 
 def test_tree(create_db):
-    check_term("OBI:0000666")
-    check_term("OBI:0000793")
-    check_term("OBI:0100046")
+    check_term("OBI:0000666", [])
+    check_term("OBI:0000793", [])
+    check_term("OBI:0000793", ["rdfs:label", "IAO:0000115"])
+    check_term("OBI:0100046", [])
