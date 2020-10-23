@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sqlite3
 import sys
 
@@ -62,7 +63,7 @@ def main():
         if "{curie}" not in href:
             raise RuntimeError("The --href argument must contain '{curie}'")
     else:
-        href = None
+        href = "?id={curie}"
         if args.include_db:
             href += "&db={db}"
 
@@ -886,11 +887,16 @@ def terms2rdfa(
 
     # Custom JS for search bar using Typeahead
     if include_search:
-        add_query = ""
+        # Built the href to return when you select a term
+        href_split = href.split("{curie}")
+        before = href_split[0].format(db=treename)
+        after = href_split[1].format(db=treename)
+        js_funct = f'str.push("{before}" + encodeURIComponent(obj[p]) + "{after}");'
+
+        # Build the href to return names JSON
         remote = "'?text=%QUERY&format=json'"
         if "db=" in href:
             # Add tree name to query params
-            add_query = f'str.push("db={treename}");'
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
             """$('#search-form').submit(function () {
@@ -965,17 +971,16 @@ def terms2rdfa(
       q = {}
       table = table.replace('_all', '');
       q[table] = value
-      window.location = "?" + query(q);
+      window.location = query(q);
     };
     function query(obj) {
       var str = [];
       for (var p in obj)
         if (obj.hasOwnProperty(p)) {
-          str.push("id=" + encodeURIComponent(obj[p]));
-        }
-      """
-            + add_query
+          """
+            + js_funct
             + """
+        }
       return str.join("&");
     }"""
         )
