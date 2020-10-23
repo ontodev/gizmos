@@ -5,8 +5,6 @@ import os
 import sqlite3
 import sys
 
-import json
-
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import render

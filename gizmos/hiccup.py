@@ -1,6 +1,3 @@
-import logging
-
-
 def render(prefixes, element, href="?id={curie}", db=None, depth=0):
     """Render hiccup-style HTML vector as HTML."""
     indent = "  " * depth
