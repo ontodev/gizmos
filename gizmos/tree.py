@@ -224,7 +224,7 @@ def term2tree(data, treename, term_id, include_db=False):
             hierarchy = ["ul", ["li", o, hierarchy]]
             node = parent
 
-    hierarchy.insert(1, {"id": "hierarchy", "class": "col-md"})
+    hierarchy.insert(1, {"id": "hierarchy", "class": "hierarchy multiple-children col-md"})
     return hierarchy
 
 
@@ -491,9 +491,9 @@ def term2rdfa(
     term = [
         "div",
         {"resource": subject},
-        ["h2", subject_label],
-        ["a", {"href": si}, si],
-        ["div", {"class": "row"}, hierarchy, h2, items],
+        ["div", {"class": "row"}, ["h2", subject_label]],
+        ["div", {"class": "row"}, ["a", {"href": si}, si]],
+        ["div", {"class": "row", "style": "padding-top: 10px;"}, hierarchy, h2, items],
     ]
     return ps, term
 
@@ -665,12 +665,9 @@ def terms2rdfa(
         ],
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
         ["title", data["labels"].get(term_ids[0], treename + " Browser")],
-    ]
-    if include_search:
-        head.append(
-            [
-                "style",
-                """
+        [
+            "style",
+            """
     #annotations {
       padding-left: 1em;
       list-style-type: none !important;
@@ -776,8 +773,8 @@ def terms2rdfa(
         display: block !important; }
         .input-group span.twitter-typeahead .tt-menu {
           top: 2.375rem !important; }""",
-            ]
-        )
+        ],
+    ]
 
     # Create the prefix element
     pref_strs = []
