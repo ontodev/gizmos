@@ -24,7 +24,13 @@ python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 
 The `term` should be a CURIE with a prefix already defined in the `prefix` table of the database. If the `term` is not included, the output will show a tree starting at `owl:Thing`.
 
-The links in the tree return query strings with the ID of the term:
+This can be useful when writing scripts that return trees from different databases.
+
+If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
+
+#### Tree Links
+
+The links in the tree return query strings with the ID of the term to browse all the terms in the tree:
 ```
 ?id=FOO:123
 ```
@@ -34,13 +40,13 @@ If you provide the `-d`/`--include-db` flag, you will also get the `db` paramete
 ?db=bar&id=FOO:123
 ```
 
-This can be useful when writing scripts that return trees from different databases.
+Alternatively, if your script expects a different format than query strings (or different parameter names), you can use the `-H`/`--href` option and pass a python-esqe formatting string, e.g. `-H "./{curie}"` or `-H "?curie={curie}"`. When you click on the `FOO:123` term, the link will direct to `./FOO:123` or `?curie=FOO:123`, respectively, instead of `?id=FOO:123`.
 
-If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
+The formatting string must contain `{curie}`, and optionally contain `{db}`. Any other text enclosed in curly brackets will be ignored. This should not be used with the `-d` flag.
 
 #### Annotations
 
-When displaying a term, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. You can define which annotations to include with the `-a`/`--annotation` and `-A`/`--annotations` options.
+When displaying a ter, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. You can define which annotations to include with the `-a`/`--annotation` and `-A`/`--annotations` options.
 
 You can pass one or more annotation property CURIEs in the command line using `-a`/`--annotation`. These will appear in the order that you pass:
 ```

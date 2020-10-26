@@ -2,12 +2,13 @@
 
 import logging
 import os
+import re
 import sqlite3
 import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
-from gizmos.hiccup import curie2href, render
+from gizmos.hiccup import render
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -42,9 +43,10 @@ def main():
     p.add_argument(
         "-d",
         "--include-db",
-        help="If provided, include db param in query string",
+        help="If provided, include 'db' param in query string",
         action="store_true",
     )
+    p.add_argument("-H", "--href", help="Format string to convert CURIEs to tree links")
     p.add_argument(
         "-s", "--include-search", help="If provided, include a search bar", action="store_true"
     )
@@ -56,20 +58,29 @@ def main():
         with open(args.annotations, "r") as f:
             annotation_ids.extend([x.strip() for x in f.readlines()])
 
+    if args.href:
+        href = args.href
+        if "{curie}" not in href:
+            raise RuntimeError("The --href argument must contain '{curie}'")
+    else:
+        href = "?id={curie}"
+        if args.include_db:
+            href += "&db={db}"
+
     # Run tree and write HTML to stdout
     sys.stdout.write(
         tree(
             args.db,
             args.term,
+            href=href,
             annotation_ids=annotation_ids,
-            include_db=args.include_db,
             include_search=args.include_search,
         )
     )
 
 
 def tree(
-    db, term, annotation_ids=None, include_db=False, include_search=False,
+    db, term, href="?id={curie}", annotation_ids=None, include_search=False,
 ):
     treename = os.path.splitext(os.path.basename(db))[0]
     if term:
@@ -84,13 +95,13 @@ def tree(
             cur,
             treename,
             term,
+            href=href,
             annotation_ids=annotation_ids,
-            include_db=include_db,
             include_search=include_search,
         )
 
 
-def build_nested(data, spv2annotation, labels, db, source, row, ele):
+def build_nested(treename, data, labels, spv2annotation, source, row, ele, href="?id={curie}"):
     """Build a nested hiccup list of axiom annotations."""
     predicate = row["predicate"]
     if source in spv2annotation:
@@ -108,7 +119,7 @@ def build_nested(data, spv2annotation, labels, db, source, row, ele):
                             "small",
                             [
                                 "a",
-                                {"href": curie2href(ann_predicate, db)},
+                                {"href": href.format(curie=ann_predicate, db=treename)},
                                 labels.get(ann_predicate, ann_predicate),
                             ],
                         ],
@@ -118,7 +129,16 @@ def build_nested(data, spv2annotation, labels, db, source, row, ele):
                     ax_os = []
                     for ar in ann_rows:
                         ax_os.append(["li", ["small", row2o([], data, ar)]])
-                        build_nested(data, spv2annotation, labels, db, ar["subject"], ar, ax_os)
+                        build_nested(
+                            treename,
+                            data,
+                            labels,
+                            spv2annotation,
+                            ar["subject"],
+                            ar,
+                            ax_os,
+                            href=href,
+                        )
                     ele.append(["ul", anchor, ["ul"] + ax_os])
 
     return ele
@@ -140,14 +160,10 @@ def dict_factory(cursor, row):
     return d
 
 
-def term2tree(data, treename, term_id, include_db=False):
+def term2tree(data, treename, term_id, href="?id={curie}"):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return ""
-
-    db = None
-    if include_db:
-        db = treename
 
     tree = data[treename][term_id]
     obsolete = data["obsolete"]
@@ -202,13 +218,21 @@ def term2tree(data, treename, term_id, include_db=False):
             parents = data[treename][node]["parents"]
             if len(parents) == 0:
                 # No parent
-                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
+                o = [
+                    "a",
+                    {"resource": oc, "href": href.format(curie=node, db=treename)},
+                    object_label,
+                ]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             parent = parents[0]
             if node == parent:
                 # Parent is the same
-                o = ["a", {"resource": oc, "href": curie2href(node, db)}, object_label]
+                o = [
+                    "a",
+                    {"resource": oc, "href": href.format(curie=node, db=treename)},
+                    object_label,
+                ]
                 hierarchy = ["ul", ["li", o, hierarchy]]
                 break
             o = [
@@ -217,7 +241,7 @@ def term2tree(data, treename, term_id, include_db=False):
                     "about": parent,
                     "rev": "rdfs:subClassOf",
                     "resource": oc,
-                    "href": curie2href(node, db),
+                    "href": href.format(curie=node, db=treename),
                 },
                 object_label,
             ]
@@ -229,15 +253,11 @@ def term2tree(data, treename, term_id, include_db=False):
 
 
 def term2rdfa(
-    cur, prefixes, treename, stanza, term_id, annotation_ids, include_db=False, add_children=None
+    cur, prefixes, treename, stanza, term_id, annotation_ids, href="?id={curie}", add_children=None
 ):
     """Create a hiccup-style HTML vector for the given term."""
     if stanza and len(stanza) == 0:
         return set(), "Not found"
-
-    db = None
-    if include_db:
-        db = treename
 
     # A set that will be filled in with all of the compact URIs in the given stanza:
     curies = set()
@@ -465,7 +485,7 @@ def term2rdfa(
             continue
         anchor = [
             "a",
-            {"href": curie2href(predicate, db)},
+            {"href": href.format(curie=predicate, db=treename)},
             labels.get(predicate, predicate),
         ]
         # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
@@ -476,7 +496,7 @@ def term2rdfa(
             o = ["li", row2o(stanza, data, row)]
 
             # Check for axiom annotations and create nested
-            nest = build_nested(data, spv2annotation, labels, db, term_id, row, [])
+            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
             if nest:
                 o += nest
 
@@ -485,7 +505,7 @@ def term2rdfa(
         if os:
             items.append(["li", anchor, ["ul"] + os])
 
-    hierarchy = term2tree(data, treename, term_id, include_db=include_db)
+    hierarchy = term2tree(data, treename, term_id, href=href)
     h2 = ""  # term2tree(data, treename, term_id)
 
     term = [
@@ -498,7 +518,7 @@ def term2rdfa(
     return ps, term
 
 
-def thing2rdfa(cur, all_prefixes, treename, property_ids, include_db=False):
+def thing2rdfa(cur, all_prefixes, treename, property_ids, href="?id={curie}"):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     cur.execute(
@@ -534,13 +554,13 @@ def thing2rdfa(cur, all_prefixes, treename, property_ids, include_db=False):
         stanza,
         "owl:Thing",
         property_ids,
-        include_db=include_db,
+        href=href,
         add_children=add_children,
     )
 
 
 def terms2rdfa(
-    cur, treename, term_ids, annotation_ids=None, include_db=False, include_search=False,
+    cur, treename, term_ids, href="?id={curie}", annotation_ids=None, include_search=False,
 ):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
@@ -561,7 +581,7 @@ def terms2rdfa(
         term_ids = ["owl:Thing"]
         if not res:
             # No declared children of owl:Thing, find the top-level ourselves
-            p, t = thing2rdfa(cur, all_prefixes, treename, annotation_ids, include_db=include_db)
+            p, t = thing2rdfa(cur, all_prefixes, treename, annotation_ids, href=href)
             ps.update(p)
             terms.append(t)
 
@@ -637,7 +657,7 @@ def terms2rdfa(
                     )
                     annotation_ids = [x["s"] for x in cur.fetchall()]
             p, t = term2rdfa(
-                cur, all_prefixes, treename, stanza, term_id, annotation_ids, include_db=include_db
+                cur, all_prefixes, treename, stanza, term_id, annotation_ids, href=href
             )
             ps.update(p)
             terms.append(t)
@@ -864,11 +884,16 @@ def terms2rdfa(
 
     # Custom JS for search bar using Typeahead
     if include_search:
-        add_query = ""
+        # Built the href to return when you select a term
+        href_split = href.split("{curie}")
+        before = href_split[0].format(db=treename)
+        after = href_split[1].format(db=treename)
+        js_funct = f'str.push("{before}" + encodeURIComponent(obj[p]) + "{after}");'
+
+        # Build the href to return names JSON
         remote = "'?text=%QUERY&format=json'"
-        if include_db:
+        if "db=" in href:
             # Add tree name to query params
-            add_query = f'str.push("db={treename}");'
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
             """$('#search-form').submit(function () {
@@ -943,30 +968,24 @@ def terms2rdfa(
       q = {}
       table = table.replace('_all', '');
       q[table] = value
-      window.location = "?" + query(q);
+      window.location = query(q);
     };
     function query(obj) {
       var str = [];
       for (var p in obj)
         if (obj.hasOwnProperty(p)) {
-          str.push("id=" + encodeURIComponent(obj[p]));
-        }
-      """
-            + add_query
+          """
+            + js_funct
             + """
+        }
       return str.join("&");
     }"""
         )
 
-    body.append(
-        ["script", {"type": "text/javascript"}, js,]
-    )
+    body.append(["script", {"type": "text/javascript"}, js])
     html = ["html", head, body]
 
-    db = None
-    if include_db:
-        db = treename
-    output = "Content-Type: text/html\n\n" + render(all_prefixes, html, db)
+    output = "Content-Type: text/html\n\n" + render(all_prefixes, html, href=href, db=treename)
     # escaped = output.replace("<","&lt;").replace(">","&gt;")
     # output += f"<pre><code>{escaped}</code></pre>"
     return output
