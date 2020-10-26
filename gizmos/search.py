@@ -12,14 +12,12 @@ def main():
     p.add_argument("text", nargs="?", help="Text to search")
     p.add_argument("-l", "--limit", help="Limit for number of results", type=int, default=30)
     args = p.parse_args()
-    search(args.db, args.text, args.limit)
+    sys.stdout.write(search(args.db, args.text, args.limit))
 
 
 def search(db, text, limit=30):
     names = get_names(db, text, limit)
-    output = "Content-Type: application/json\n\n"
-    output += json.dumps(names, indent=4)
-    sys.stdout.write(output)
+    return json.dumps(names, indent=4)
 
 
 def get_names(db_path, text, limit):

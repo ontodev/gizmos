@@ -985,10 +985,7 @@ def terms2rdfa(
     body.append(["script", {"type": "text/javascript"}, js])
     html = ["html", head, body]
 
-    output = "Content-Type: text/html\n\n" + render(all_prefixes, html, href=href, db=treename)
-    # escaped = output.replace("<","&lt;").replace(">","&gt;")
-    # output += f"<pre><code>{escaped}</code></pre>"
-    return output
+    return render(all_prefixes, html, href=href, db=treename)
 
 
 def tree_label(data, treename, s):
