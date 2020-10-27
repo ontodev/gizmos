@@ -160,6 +160,43 @@ def dict_factory(cursor, row):
     return d
 
 
+def get_sorted_predicates(cur, exclude_ids=None):
+    """Return a list of predicates IDs sorted by their label, optionally excluding some predicate
+    IDs. If the predicate does not have a label, use the ID as the label."""
+    exclude = None
+    if exclude_ids:
+        exclude = ", ".join([f"'{x}'" for x in exclude_ids])
+
+    # Retrieve all predicate IDs
+    cur.execute("SELECT DISTINCT predicate FROM statements")
+    all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
+
+    # Retrieve predicates with labels
+    if exclude:
+        cur.execute(
+            f"""
+            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
+            JOIN statements s2 ON s1.predicate = s2.subject
+            WHERE s1.predicate NOT IN ({exclude}) AND s2.predicate = 'rdfs:label'"""
+        )
+    else:
+        cur.execute(
+            """
+            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
+            JOIN statements s2 ON s1.predicate = s2.subject
+            WHERE s2.predicate = 'rdfs:label'"""
+        )
+    predicate_label_map = {x["s"]: x["label"] for x in cur.fetchall()}
+
+    # Add unlabeled predicates to map with label = ID
+    for p in all_predicate_ids:
+        if p not in predicate_label_map:
+            predicate_label_map[p] = p
+
+    # Return list of keys sorted by value (label)
+    return [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
+
+
 def term2tree(data, treename, term_id, href="?id={curie}"):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
@@ -598,43 +635,14 @@ def terms2rdfa(
             if predicate_ids and predicate_ids_split:
                 # If some IDs were provided with *, add the remaining predicates
                 # These properties go in between the before & after defined in the split
-                predicates = ", ".join([f"'{x}'" for x in predicate_ids])
-                # If no predicates were provided, get all
-                cur.execute("SELECT DISTINCT predicate FROM statements")
-                all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
-                # Retrieve predicates with labels
-                cur.execute(
-                    f"""
-                    SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
-                    JOIN statements s2 ON s1.predicate = s2.subject
-                    WHERE s1.predicate NOT IN ({predicates}) AND s2.predicate = 'rdfs:label'"""
-                )
-                predicate_label_map = {x["s"]: x["label"] for x in cur.fetchall()}
-                for p in all_predicate_ids:
-                    if p not in predicate_label_map:
-                        predicate_label_map[p] = p
-                rem_predicate_ids = [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
+                rem_predicate_ids = get_sorted_predicates(cur, exclude_ids=predicate_ids)
 
                 # Separate before & after with the remaining properties
                 predicate_ids = predicate_ids_split[0]
                 predicate_ids.extend(rem_predicate_ids)
                 predicate_ids.extend(predicate_ids_split[1])
             elif not predicate_ids:
-                # If no predicates were provided, get all
-                cur.execute("SELECT DISTINCT predicate FROM statements")
-                all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
-                # Retrieve predicates with labels
-                cur.execute(
-                    """
-                    SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
-                    JOIN statements s2 ON s1.predicate = s2.subject
-                    WHERE s2.predicate = 'rdfs:label'"""
-                )
-                predicate_label_map = {x["s"]: x["label"] for x in cur.fetchall()}
-                for p in all_predicate_ids:
-                    if p not in predicate_label_map:
-                        predicate_label_map[p] = p
-                predicate_ids = [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
+                predicate_ids = get_sorted_predicates(cur)
 
             cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
             stanza = cur.fetchall()
