@@ -34,12 +34,8 @@ def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
-    p.add_argument(
-        "-a", "--annotation", action="append", help="CURIE of annotation property to include"
-    )
-    p.add_argument(
-        "-A", "--annotations", help="File containing CURIEs of annotation properties to include"
-    )
+    p.add_argument("-p", "--predicate", action="append", help="CURIE of predicate to include")
+    p.add_argument("-P", "--predicates", help="File containing CURIEs of predicates to include")
     p.add_argument(
         "-d",
         "--include-db",
@@ -52,11 +48,11 @@ def main():
     )
     args = p.parse_args()
 
-    # Maybe get annotation properties to include
-    annotation_ids = args.annotation or []
-    if args.annotations:
-        with open(args.annotations, "r") as f:
-            annotation_ids.extend([x.strip() for x in f.readlines()])
+    # Maybe get predicates to include
+    predicate_ids = args.predicate or []
+    if args.predicates:
+        with open(args.predicates, "r") as f:
+            predicate_ids.extend([x.strip() for x in f.readlines()])
 
     if args.href:
         href = args.href
@@ -73,14 +69,14 @@ def main():
             args.db,
             args.term,
             href=href,
-            annotation_ids=annotation_ids,
+            predicate_ids=predicate_ids,
             include_search=args.include_search,
         )
     )
 
 
 def tree(
-    db, term, href="?id={curie}", annotation_ids=None, include_search=False,
+    db, term, href="?id={curie}", predicate_ids=None, include_search=False,
 ):
     treename = os.path.splitext(os.path.basename(db))[0]
     if term:
@@ -96,7 +92,7 @@ def tree(
             treename,
             term,
             href=href,
-            annotation_ids=annotation_ids,
+            predicate_ids=predicate_ids,
             include_search=include_search,
         )
 
@@ -158,6 +154,43 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
+
+def get_sorted_predicates(cur, exclude_ids=None):
+    """Return a list of predicates IDs sorted by their label, optionally excluding some predicate
+    IDs. If the predicate does not have a label, use the ID as the label."""
+    exclude = None
+    if exclude_ids:
+        exclude = ", ".join([f"'{x}'" for x in exclude_ids])
+
+    # Retrieve all predicate IDs
+    cur.execute("SELECT DISTINCT predicate FROM statements")
+    all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
+
+    # Retrieve predicates with labels
+    if exclude:
+        cur.execute(
+            f"""
+            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
+            JOIN statements s2 ON s1.predicate = s2.subject
+            WHERE s1.predicate NOT IN ({exclude}) AND s2.predicate = 'rdfs:label'"""
+        )
+    else:
+        cur.execute(
+            """
+            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
+            JOIN statements s2 ON s1.predicate = s2.subject
+            WHERE s2.predicate = 'rdfs:label'"""
+        )
+    predicate_label_map = {x["s"]: x["label"] for x in cur.fetchall()}
+
+    # Add unlabeled predicates to map with label = ID
+    for p in all_predicate_ids:
+        if p not in predicate_label_map:
+            predicate_label_map[p] = p
+
+    # Return list of keys sorted by value (label)
+    return [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
 
 
 def term2tree(data, treename, term_id, href="?id={curie}"):
@@ -253,7 +286,7 @@ def term2tree(data, treename, term_id, href="?id={curie}"):
 
 
 def term2rdfa(
-    cur, prefixes, treename, stanza, term_id, annotation_ids, href="?id={curie}", add_children=None
+    cur, prefixes, treename, stanza, term_id, predicate_ids, href="?id={curie}", add_children=None
 ):
     """Create a hiccup-style HTML vector for the given term."""
     if stanza and len(stanza) == 0:
@@ -470,17 +503,8 @@ def term2rdfa(
             s2[row["predicate"]].append(row)
     pcs = list(s2.keys())
 
-    # Append all non-annotation property predicates
-    cur.execute(
-        """
-        SELECT subject FROM statements
-        WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty'"""
-    )
-    all_annotation_ids = [x["subject"] for x in cur.fetchall()]
-    property_ids = annotation_ids + [x for x in pcs if x not in all_annotation_ids]
-
     # Loop through the rows of the stanza that correspond to the predicates of the given term:
-    for predicate in property_ids:
+    for predicate in predicate_ids:
         if predicate not in pcs:
             continue
         anchor = [
@@ -518,7 +542,7 @@ def term2rdfa(
     return ps, term
 
 
-def thing2rdfa(cur, all_prefixes, treename, property_ids, href="?id={curie}"):
+def thing2rdfa(cur, all_prefixes, treename, predicate_ids, href="?id={curie}"):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     cur.execute(
@@ -553,14 +577,14 @@ def thing2rdfa(cur, all_prefixes, treename, property_ids, href="?id={curie}"):
         treename,
         stanza,
         "owl:Thing",
-        property_ids,
+        predicate_ids,
         href=href,
         add_children=add_children,
     )
 
 
 def terms2rdfa(
-    cur, treename, term_ids, href="?id={curie}", annotation_ids=None, include_search=False,
+    cur, treename, term_ids, href="?id={curie}", predicate_ids=None, include_search=False,
 ):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
@@ -581,84 +605,44 @@ def terms2rdfa(
         term_ids = ["owl:Thing"]
         if not res:
             # No declared children of owl:Thing, find the top-level ourselves
-            p, t = thing2rdfa(cur, all_prefixes, treename, annotation_ids, href=href)
+            p, t = thing2rdfa(cur, all_prefixes, treename, predicate_ids, href=href)
             ps.update(p)
             terms.append(t)
 
-    # Maybe find a * in the IDs that represents all remaining annotation properties
-    annotation_ids_split = None
-    if "*" in annotation_ids:
+    # Maybe find a * in the IDs that represents all remaining predicates
+    predicate_ids_split = None
+    if "*" in predicate_ids:
         before = []
         after = []
         found = False
-        for ann_id in annotation_ids:
-            if ann_id == "*":
+        for pred in predicate_ids:
+            if pred == "*":
                 found = True
                 continue
             if not found:
-                before.append(ann_id)
+                before.append(pred)
             else:
-                after.append(ann_id)
-        annotation_ids_split = [before, after]
+                after.append(pred)
+        predicate_ids_split = [before, after]
 
     # Run for given terms if terms have not yet been filled out
     if not terms:
         for term_id in term_ids:
-            if annotation_ids and not annotation_ids_split:
-                # First get all non-annotation axioms
-                cur.execute(
-                    f"""
-                    SELECT * FROM statements 
-                    WHERE stanza = '{term_id}'
-                    AND predicate NOT IN
-                      (SELECT subject FROM statements
-                       WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty')"""
-                )
-                stanza = cur.fetchall()
-                # Then get the desired annotation axioms
-                predicates = ", ".join([f"'{x}'" for x in annotation_ids])
-                cur.execute(
-                    f"""
-                    SELECT * FROM statements
-                    WHERE stanza = '{term_id}' AND predicate IN ({predicates})"""
-                )
-                stanza.extend(cur.fetchall())
-            else:
-                # Otherwise get all axioms for this term
-                cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
-                stanza = cur.fetchall()
-                if annotation_ids:
-                    # If some IDs were provided with *, add the remaining annotation properties
-                    # These properties go in between the before & after defined in the split
-                    predicates = ", ".join([f"'{x}'" for x in annotation_ids])
-                    cur.execute(
-                        f"""
-                        SELECT DISTINCT s1.subject AS s FROM statements s1
-                        JOIN statements s2 ON s1.subject = s2.subject
-                        WHERE s1.predicate = 'rdf:type' AND s1.object = 'owl:AnnotationProperty'
-                          AND s1.subject NOT IN ({predicates})
-                          AND s2.predicate = 'rdfs:label'
-                        ORDER BY s2.value COLLATE NOCASE ASC"""
-                    )
+            if predicate_ids and predicate_ids_split:
+                # If some IDs were provided with *, add the remaining predicates
+                # These properties go in between the before & after defined in the split
+                rem_predicate_ids = get_sorted_predicates(cur, exclude_ids=predicate_ids)
 
-                    # Separate before & after with the remaining properties
-                    annotation_ids = annotation_ids_split[0]
-                    annotation_ids.extend([x["s"] for x in cur.fetchall()])
-                    annotation_ids.extend(annotation_ids_split[1])
-                else:
-                    # If no annotations were provided, get all annotation property IDs
-                    cur.execute(
-                        """
-                        SELECT DISTINCT s1.subject AS s FROM statements s1
-                        JOIN statements s2 ON s1.subject = s2.subject
-                        WHERE s1.predicate = 'rdf:type' AND s1.object = 'owl:AnnotationProperty'
-                        AND s2.predicate = 'rdfs:label'
-                        ORDER BY s2.value COLLATE NOCASE ASC"""
-                    )
-                    annotation_ids = [x["s"] for x in cur.fetchall()]
-            p, t = term2rdfa(
-                cur, all_prefixes, treename, stanza, term_id, annotation_ids, href=href
-            )
+                # Separate before & after with the remaining properties
+                predicate_ids = predicate_ids_split[0]
+                predicate_ids.extend(rem_predicate_ids)
+                predicate_ids.extend(predicate_ids_split[1])
+            elif not predicate_ids:
+                predicate_ids = get_sorted_predicates(cur)
+
+            cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
+            stanza = cur.fetchall()
+            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id, predicate_ids, href=href)
             ps.update(p)
             terms.append(t)
 
