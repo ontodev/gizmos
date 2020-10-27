@@ -44,21 +44,21 @@ Alternatively, if your script expects a different format than query strings (or 
 
 The formatting string must contain `{curie}`, and optionally contain `{db}`. Any other text enclosed in curly brackets will be ignored. This should not be used with the `-d` flag.
 
-#### Annotations
+#### Predicates
 
-When displaying a ter, `gizmos.tree` will display all annotations listed in alphabetical order by annotation property on the right-hand side of the window. You can define which annotations to include with the `-a`/`--annotation` and `-A`/`--annotations` options.
+When displaying a term, `gizmos.tree` will display all predicate-value pairs listed in alphabetical order by predicate label on the right-hand side of the window. You can define which predicates to include with the `-p`/`--predicate` and `-P`/`--predicates` options.
 
-You can pass one or more annotation property CURIEs in the command line using `-a`/`--annotation`. These will appear in the order that you pass:
+You can pass one or more predicate CURIEs in the command line using `-p`/`--predicate`. These will appear in the order that you pass:
 ```
-python3 -m gizmos.tree foo.db foo:123 -a rdfs:label -a rdfs:comment > bar.html
-```
-
-You can also pass a text file containing a list of annotation property CURIEs (one per line) using `-A`/`--annotations`:
-```
-python3 -m gizmos.tree foo.db foo:123 -A annotations.txt > bar.html
+python3 -m gizmos.tree foo.db foo:123 -p rdfs:label -p rdfs:comment > bar.html
 ```
 
-You can specify to include the remaining annotation properties in a text file with `*`. The `*` can appear anywhere in the list, so you can choose to include certain properites last:
+You can also pass a text file containing a list of predicate CURIEs (one per line) using `-P`/`--predicates`:
+```
+python3 -m gizmos.tree foo.db foo:123 -P predicates.txt > bar.html
+```
+
+You can specify to include the remaining predicates with `*`. The `*` can appear anywhere in the list, so you can choose to include certain predicates last:
 ```
 rdfs:label
 *
@@ -67,7 +67,7 @@ rdfs:comment
 
 The `*` character also works on the command line, but must be enclosed in quotes:
 ```
-python3 -m gizmos.tree foo.db foo:123 -a rdfs:label -a "*" > bar.html
+python3 -m gizmos.tree foo.db foo:123 -p rdfs:label -p "*" > bar.html
 ```
 
 #### CGI Script Example
