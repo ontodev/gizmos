@@ -8,15 +8,15 @@ from argparse import ArgumentParser
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
 
-Creates a TTL file containing the term, annotations, and ancestors. TTL is written to stdout.
+Creates a TTL file containing the term, predicates, and ancestors. TTL is written to stdout.
 You can include more than one `-t <curie>`/`--term <curie>`.
 
 You may also specify multiple CURIEs to extract with `-T <file>`/`--terms <file>`
 where the file contains a list of CURIEs to extract.
 
-You may also specify which annotations you would like to include with
-`-a <curie>`/`--annotation <curie>` or `-A <file>`/`--annotations <file>`
-where the file contains a list of annotation property CURIEs.
+You may also specify which predicates you would like to include with
+`-p <curie>`/`--predicate <curie>` or `-P <file>`/`--predicates <file>`
+where the file contains a list of predicate CURIEs.
 
 Finally, if you don't wish to include the ancestors of the term/terms,
 include the `-n`/`--no-hierarchy` flag.
@@ -36,10 +36,10 @@ def main():
         "-T", "--terms", help="File containing CURIES of terms to extract",
     )
     p.add_argument(
-        "-a", "--annotation", action="append", help="CURIE of annotation property to include",
+        "-p", "--predicate", action="append", help="CURIE of predicate to include",
     )
     p.add_argument(
-        "-A", "--annotations", help="File containing CURIEs of annotation properties to include",
+        "-P", "--predicates", help="File containing CURIEs of predicates to include",
     )
     p.add_argument(
         "-n",
@@ -65,17 +65,14 @@ def extract(args):
         logging.critical("One or more term(s) must be specified with --term or --terms")
         sys.exit(1)
 
-    # Get optional annotations (otherwise, all annotations are included)
-    annotations = None
-    if args.annotation:
-        # One or more annotations to add
-        annotations = args.annotation
-    if args.annotations:
-        with open(args.annotations, "r") as f:
-            annotations = [x.strip() for x in f.readlines()]
+    # Maybe get predicates to include
+    predicate_ids = args.predicate or []
+    if args.predicates:
+        with open(args.predicates, "r") as f:
+            predicate_ids.extend([x.strip() for x in f.readlines()])
 
     ttl = "\n".join(
-        extract_terms(args.database, terms, annotations, no_hierarchy=args.no_hierarchy)
+        extract_terms(args.database, terms, predicate_ids, no_hierarchy=args.no_hierarchy)
     )
     return ttl
 
@@ -108,7 +105,7 @@ def escape_qnames(cur):
         )
 
 
-def extract_terms(database, terms, annotations, no_hierarchy=False):
+def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
     """Extract terms from the ontology database and return the module as lines of Turtle."""
 
     # Create a new table (extract) and copy the triples we care about
@@ -125,18 +122,17 @@ def extract_terms(database, terms, annotations, no_hierarchy=False):
 
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
         cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
-        if annotations:
+        if predicate_ids:
             cur.executemany(
-                "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in annotations]
+                "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in predicate_ids]
             )
         else:
-            # Insert all annotations
+            # Insert all predicates
             cur.execute(
                 """
                     INSERT OR IGNORE INTO tmp.predicates
-                    SELECT DISTINCT subject
-                    FROM statements
-                    WHERE predicate = 'rdf:type' AND object = 'owl:AnnotationProperty'"""
+                    SELECT DISTINCT predicate
+                    FROM statements"""
             )
         if not no_hierarchy:
             cur.execute(

@@ -34,12 +34,8 @@ def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
-    p.add_argument(
-        "-p", "--predicate", action="append", help="CURIE of predicate to include"
-    )
-    p.add_argument(
-        "-P", "--predicates", help="File containing CURIEs of predicates to include"
-    )
+    p.add_argument("-p", "--predicate", action="append", help="CURIE of predicate to include")
+    p.add_argument("-P", "--predicates", help="File containing CURIEs of predicates to include")
     p.add_argument(
         "-d",
         "--include-db",
@@ -646,9 +642,7 @@ def terms2rdfa(
 
             cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
             stanza = cur.fetchall()
-            p, t = term2rdfa(
-                cur, all_prefixes, treename, stanza, term_id, predicate_ids, href=href
-            )
+            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id, predicate_ids, href=href)
             ps.update(p)
             terms.append(t)
 

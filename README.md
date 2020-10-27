@@ -13,6 +13,19 @@ There are some dependencies that are test-only (e.g., will not be listed in the 
 
 ## Modules
 
+### `gizmos.extract`
+
+The `extract` module creates a TTL file containing the term, predicates, and ancestors written to stdout from a SQL database. The SQL database should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure it is in the right format. The database is specified by `-d`/`--database`
+```
+python3 extract.py -d [path-to-database] -t [term] > [output-html]
+```
+
+The term or terms as CURIEs are specified with `-t <curie>`/`--term <curie>`. You may also specify multiple CURIEs to extract with `-T <file>`/`--terms <file>` where the file contains a list of CURIEs to extract.
+
+The output contains the specified term and all its ancestors up to `owl:Thing`. If you don't wish to include the ancestors of the term/terms, include the `-n`/`--no-hierarchy` flag.
+
+You may also specify which predicates you would like to include with `-p <curie>`/`--predicate <curie>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
+
 ### `gizmos.tree`
 
 The `tree` module produces a CGI tree browser for a given term contained in a SQL database. The SQL database should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure it is in the right format.
