@@ -1,6 +1,5 @@
 import csv
 import io
-import json
 import logging
 import re
 import sqlite3
@@ -9,7 +8,7 @@ import sys
 from argparse import ArgumentParser
 from collections import defaultdict
 
-from .helpers import dict_factory, get_terms
+from .helpers import add_labels, dict_factory, get_ids, get_terms
 from .hiccup import render
 
 """
@@ -44,17 +43,17 @@ to exclude the table headers.
 def main():
     p = ArgumentParser()
     p.add_argument("-d", "--database", required=True, help="SQLite database")
-    p.add_argument("-t", "--term", action="append", help="CURIE of term to extract")
+    p.add_argument("-t", "--term", action="append", help="CURIE or label of term to extract")
     p.add_argument(
-        "-T", "--terms", help="File containing CURIES of terms to extract",
+        "-T", "--terms", help="File containing CURIES or labels of terms to extract",
     )
     p.add_argument(
-        "-p", "--predicate", action="append", help="CURIE of predicate to include",
+        "-p", "--predicate", action="append", help="CURIE or label of predicate to include",
     )
     p.add_argument(
-        "-P", "--predicates", help="File containing CURIEs of predicates to include",
+        "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
-    p.add_argument("-f", "--format", help="Output format (tsv, csv, json, html)", default="tsv")
+    p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
     p.add_argument(
@@ -79,44 +78,25 @@ def export(args):
     )
 
 
-def add_labels(cur):
-    """Create a temporary labels table. If a term does not have a label, the label is the ID."""
-    # Create a tmp labels table
-    cur.execute("ATTACH DATABASE '' AS tmp")
-    cur.execute("CREATE TABLE tmp.labels(term TEXT PRIMARY KEY, label TEXT)")
-
-    # Add all terms with label
-    cur.execute(
-        """INSERT OR IGNORE INTO tmp.labels SELECT subject, value
-           FROM statements WHERE predicate = 'rdfs:label'"""
-    )
-    # Update remaining with their ID as their label
-    cur.execute("INSERT OR IGNORE INTO tmp.labels SELECT DISTINCT subject, subject FROM statements")
-    cur.execute(
-        "INSERT OR IGNORE INTO tmp.labels SELECT DISTINCT predicate, predicate FROM statements"
-    )
-
-
-def get_html_value(value_format, vo):
+def get_html_value(value_format, predicate_id, vo):
     """Return a hiccup-style HTML href or simple string for a value or object dictionary based on
     the value format. The href will only be returned if the dictionary has an 'iri' key."""
-    if "@value" in vo:
-        return vo["@value"]
+    if "value" in vo:
+        return ["p", {"property": predicate_id}, vo["value"]]
     elif value_format == "label":
         iri = vo.get("iri")
-        text = vo.get("label") or vo["@id"]
+        text = vo.get("label") or vo["id"]
     elif value_format == "curie":
         iri = vo.get("iri")
-        text = vo["@id"]
+        text = vo["id"]
     else:
         iri = vo.get("iri")
-        if iri:
-            text = iri
-        else:
-            text = vo["@id"]
-    if iri:
-        return ["a", {"href": iri}, text]
-    return text
+        text = iri
+    if predicate_id not in ["CURIE", "IRI", "label"]:
+        return ["p", ["a", {"property": predicate_id, "resource": vo["id"], "href": iri}, text]]
+    if predicate_id == "label":
+        return ["p", {"property": "rdfs:label"}, text]
+    return ["a", {"href": iri}, text]
 
 
 def get_iri(prefixes, term):
@@ -153,7 +133,7 @@ def get_objects(cur, prefixes, term, predicate_ids):
             continue
         obj_label = row["object_label"]
 
-        d = {"@id": obj, "iri": get_iri(prefixes, term)}
+        d = {"id": obj, "iri": get_iri(prefixes, term)}
         # Maybe add the label
         if obj != obj_label:
             d["label"] = obj_label
@@ -200,16 +180,16 @@ def get_predicate_ids(cur, id_or_labels=None):
 
 def get_string_value(value_format, vo):
     """Return a string from a value or object dictionary based on the value format."""
-    if "@value" in vo:
-        return vo["@value"]
+    if "value" in vo:
+        return vo["value"]
     elif value_format == "label":
         # Label or CURIE (when no label)
-        return vo.get("label") or vo["@id"]
+        return vo.get("label") or vo["id"]
     elif value_format == "curie":
         # Always the CURIE
-        return vo["@id"]
+        return vo["id"]
     # IRI or CURIE (when no IRI, which shouldn't happen)
-    return vo.get("iri") or vo["@iri"]
+    return vo.get("iri") or vo["id"]
 
 
 def get_term_details(cur, prefixes, term, predicate_ids):
@@ -219,7 +199,7 @@ def get_term_details(cur, prefixes, term, predicate_ids):
     # Handle special cases
     cur.execute(f"SELECT label FROM labels WHERE term = '{term}'")
     res = cur.fetchone()
-    base_dict = {"@id": term, "iri": get_iri(prefixes, term)}
+    base_dict = {"id": term, "iri": get_iri(prefixes, term)}
     if res:
         base_dict["label"] = res["label"]
     if "CURIE" in predicate_ids:
@@ -244,8 +224,7 @@ def get_term_details(cur, prefixes, term, predicate_ids):
 
 
 def get_values(cur, term, predicate_ids):
-    """Get a dict of predicate label -> literal values. When use_json is true, the value will be
-    {"@value": value}."""
+    """Get a dict of predicate label -> literal values."""
     predicates_str = ", ".join(
         [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
     )
@@ -261,12 +240,14 @@ def get_values(cur, term, predicate_ids):
         if value:
             if p_label not in term_values:
                 term_values[p_label] = list()
-            term_values[p_label].append({"@value": value})
+            term_values[p_label].append({"value": value})
     return term_values
 
 
-def render_html(value_formats, details, split="|", no_headers=False):
+def render_html(prefixes, value_formats, predicate_ids, details, split="|", no_headers=False):
     """Render an HTML table."""
+    # Reverse ID dict
+    predicate_labels = {v: k for k, v in predicate_ids.items()}
     # HTML Headers & CSS
     head = [
         "head",
@@ -286,14 +267,13 @@ def render_html(value_formats, details, split="|", no_headers=False):
                 "crossorigin": "anonymous",
             },
         ],
-        ["title", ""],
     ]
 
     table = ["table", {"class": "table table-striped"}]
 
     # Get headers - in order
     include_headers = set()
-    for d in details:
+    for d in details.values():
         include_headers.update(set(d.keys()))
     headers = []
     for k in value_formats.keys():
@@ -311,33 +291,45 @@ def render_html(value_formats, details, split="|", no_headers=False):
 
     # Table body
     tbody = ["tbody"]
-    for d in details:
-        tr = ["tr"]
+    for term, detail in details.items():
+        tr = ["tr", {"resource": term}]
         for h in headers:
+            predicate_id = predicate_labels[h]
             value_format = value_formats[h]
-            vo_list = d.get(h)
+            vo_list = detail.get(h)
             if not vo_list:
                 tr.append(["td"])
                 continue
             if isinstance(vo_list, list):
                 items = []
-                for i in range(len(vo_list)):
-                    vo = vo_list[i]
-                    items.append(get_html_value(value_format, vo))
-                    if i != len(vo_list) - 1:
-                        items.append(split)
-                items.insert(0, "td")
-                tr.append(items)
+                for vo in vo_list:
+                    items.append(get_html_value(value_format, predicate_id, vo))
+                ele = ["td"] + items
+                tr.append(ele)
             else:
-                tr.append(["td", get_html_value(value_format, vo_list)])
+                display = get_html_value(value_format, predicate_id, vo_list)
+                if isinstance(display, str):
+                    if predicate_id == "label":
+                        predicate_id = "rdfs:label"
+                    display = ["p", {"property": predicate_id}, display]
+                tr.append(["td", display])
         tbody.append(tr)
     table.append(tbody)
 
-    html = ["html", head, ["body", table]]
+    # Create the prefix element
+    pref_strs = []
+    for prefix, base in prefixes.items():
+        pref_strs.append(f"{prefix}: {base}")
+    pref_str = "\n".join(pref_strs)
+
+    # Render full HTML
+    html = ["html", head, ["body", {"prefix": pref_str}, table]]
     return render(None, html)
 
 
-def render_output(value_formats, details, fmt, split="|", no_headers=False):
+def render_output(
+    prefixes, value_formats, predicate_ids, details, fmt, split="|", no_headers=False
+):
     """Render the string output based on the format."""
     fmt = fmt.lower()
     if fmt == "tsv":
@@ -345,16 +337,18 @@ def render_output(value_formats, details, fmt, split="|", no_headers=False):
     elif fmt == "csv":
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
-        return render_html(value_formats, details, split=split, no_headers=no_headers)
-    elif fmt == "json":
-        return json.dumps(details, indent=4)
+        return render_html(
+            prefixes, value_formats, predicate_ids, details, split=split, no_headers=no_headers
+        )
+    else:
+        raise Exception("Invalid format: " + fmt)
 
 
 def render_table(value_formats, details, separator, split="|", no_headers=False):
     """Render a TSV or CSV table."""
     # First fix the output to be writable by DictWriter
     rows = []
-    for d in details:
+    for d in details.values():
         row = {}
         for header, value_format in value_formats.items():
             value = d.get(header)
@@ -398,17 +392,20 @@ def export_terms(
             f"The default value format ('{default_value_format}') must be one of: CURIE, IRI, label"
         )
     # Validate output format
-    if fmt.lower() not in ["tsv", "csv", "html", "json"]:
-        raise Exception(f"Output format '{fmt}' must be one of: tsv, csv, html, json")
+    if fmt.lower() not in ["tsv", "csv", "html"]:
+        raise Exception(f"Output format '{fmt}' must be one of: tsv, csv, html")
 
-    details = []
+    details = {}
     # Check if writing to JSON - the dict output will be different
     with sqlite3.connect(database) as conn:
         conn.row_factory = dict_factory
         cur = conn.cursor()
 
         # Create a tmp labels table
+        cur.execute("ATTACH DATABASE '' AS tmp")
         add_labels(cur)
+
+        term_ids = get_ids(cur, terms)
 
         if not predicates:
             # Get all predicates if not provided
@@ -441,11 +438,13 @@ def export_terms(
             prefixes[row["prefix"]] = row["base"]
 
         # Get the term details
-        for term in terms:
+        for term in term_ids:
             term_details = get_term_details(cur, prefixes, term, predicate_ids)
-            details.append(term_details)
+            details[term] = term_details
 
-    return render_output(value_formats, details, fmt, split=split, no_headers=no_headers)
+    return render_output(
+        prefixes, value_formats, predicate_ids, details, fmt, split=split, no_headers=no_headers
+    )
 
 
 if __name__ == "__main__":

@@ -17,20 +17,19 @@ Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to cr
 
 ### `gizmos.export`
 
-The `export` module creates a table (default TSV) or JSON output containing the terms and their predicates written to stdout.
+The `export` module creates a table (default TSV) output containing the terms and their predicates written to stdout.
 ```
 python3 -m gizmos.export -d [path-to-database] -t [term] > [output-tsv]
 ```
 
-The `term` should be the CURIE of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE on one line.
+The `term` should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line.
 
 You can specify a format other than TSV by using the `-f <format>`/`--format <format>` option. The following formats are supported:
 * TSV
 * CSV
 * HTML
-* JSON
 
-By default, for all formats other than JSON, headers are included. The headers are the predicate labels. If you wish to not include headers, include `-n`/`--no-headers`.
+By default, headers are included. The headers are the predicate labels. If you wish to not include headers, include `-n`/`--no-headers`.
 
 You can also specify the subset of predicates you wish to include using the `-p <term>`/`--predicate <term>` option. The `term` should be the term CURIE or the term label. Whatever you input will be used as the header for that column. The values in the column will be string values (for literal annotations) or IRIs (for objects and IRI annotations). If you want to use CURIEs instead of full IRIs, include `-V CURIE`/`--values CURIE` or, for labels, `-V label`/`--values label`.
 
@@ -41,22 +40,24 @@ For more fine grained control of how objects are output, you can include value f
 
 Any time the predicate doesn't have a value format, the value format will be the `-V` value format (IRI when not included). Note that the value formats above can also be used in `-p` and `-P`.
 
-If an ontology term has more than one value for a given predicate, it will be returned as a pipe-separated list (in JSON, it will be returned as an array). You can specify a different character to split multiple values on with `-s <char>`/`--split <char>`, for example `-s ", "` for a comma-separated list.
+If an ontology term has more than one value for a given predicate, it will be returned as a pipe-separated list. You can specify a different character to split multiple values on with `-s <char>`/`--split <char>`, for example `-s ", "` for a comma-separated list.
 
-If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates, each on one line.
+If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates (CURIE or label), each on one line.
 
 ### `gizmos.extract`
 
-The `extract` module creates a TTL file containing the term, predicates, and ancestors written to stdout.
+The `extract` module creates a TTL or JSON-LD file containing the term, predicates, and ancestors written to stdout.
 ```
 python3 extract.py -d [path-to-database] -t [term] > [output-html]
 ```
 
-The term or terms as CURIEs are specified with `-t <curie>`/`--term <curie>`. You may also specify multiple CURIEs to extract with `-T <file>`/`--terms <file>` where the file contains a list of CURIEs to extract.
+For JSON-LD, you must include `-f JSON-LD`/`--format JSON-LD`.
+
+The term or terms as CURIEs or labels are specified with `-t <term>`/`--term <term>`. You may also specify multiple terms to extract with `-T <file>`/`--terms <file>` where the file contains a list of CURIEs to extract.
 
 The output contains the specified term and all its ancestors up to `owl:Thing`. If you don't wish to include the ancestors of the term/terms, include the `-n`/`--no-hierarchy` flag.
 
-You may also specify which predicates you would like to include with `-p <curie>`/`--predicate <curie>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
+You may also specify which predicates you would like to include with `-p <term>`/`--predicate <term>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs or labels. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
 
 ### `gizmos.tree`
 

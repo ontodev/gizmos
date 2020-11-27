@@ -4,7 +4,8 @@ import sqlite3
 import sys
 
 from argparse import ArgumentParser
-from .helpers import dict_factory, get_terms
+from rdflib import Graph
+from .helpers import add_labels, dict_factory, get_ids, get_terms
 
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
@@ -32,16 +33,17 @@ The CURIEs must use a prefix from the 'prefixes' table.
 def main():
     p = ArgumentParser()
     p.add_argument("-d", "--database", required=True, help="SQLite database")
-    p.add_argument("-t", "--term", action="append", help="CURIE of term to extract")
+    p.add_argument("-t", "--term", action="append", help="CURIE or label of term to extract")
     p.add_argument(
-        "-T", "--terms", help="File containing CURIES of terms to extract",
+        "-T", "--terms", help="File containing CURIES or labels of terms to extract",
     )
     p.add_argument(
-        "-p", "--predicate", action="append", help="CURIE of predicate to include",
+        "-p", "--predicate", action="append", help="CURIE or label of predicate to include",
     )
     p.add_argument(
-        "-P", "--predicates", help="File containing CURIEs of predicates to include",
+        "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
+    p.add_argument("-f", "--format", help="", default="ttl")
     p.add_argument(
         "-n",
         "--no-hierarchy",
@@ -60,12 +62,10 @@ def extract(args):
         sys.exit(1)
 
     # Maybe get predicates to include
-    predicate_ids = get_terms(args.predicate, args.predicates)
-
-    ttl = "\n".join(
-        extract_terms(args.database, terms, predicate_ids, no_hierarchy=args.no_hierarchy)
+    predicates = get_terms(args.predicate, args.predicates)
+    return extract_terms(
+        args.database, terms, predicates, fmt=args.format, no_hierarchy=args.no_hierarchy
     )
-    return ttl
 
 
 def escape(curie):
@@ -88,8 +88,10 @@ def escape_qnames(cur):
         )
 
 
-def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
-    """Extract terms from the ontology database and return the module as lines of Turtle."""
+def extract_terms(database, terms, predicates, fmt="ttl", no_hierarchy=False):
+    """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
+    if fmt.lower() not in ["ttl", "json-ld"]:
+        raise Exception("Unknown format: " + fmt)
 
     # Create a new table (extract) and copy the triples we care about
     # Then write the triples from that table to the output file
@@ -97,11 +99,20 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
         conn.row_factory = dict_factory
         cur = conn.cursor()
 
+        # Create a temp labels table
         cur.execute("ATTACH DATABASE '' AS tmp")
+        add_labels(cur)
+
+        term_ids = get_ids(cur, terms)
+
+        predicate_ids = None
+        if predicates:
+            # Current predicates are IDs or labels - make sure we get all the IDs
+            predicate_ids = get_ids(cur, predicates)
 
         # Create the extract table
         cur.execute("CREATE TABLE tmp.terms(parent TEXT NOT NULL, child TEXT)")
-        cur.executemany("INSERT INTO tmp.terms VALUES (?, NULL)", [(x,) for x in terms])
+        cur.executemany("INSERT INTO tmp.terms VALUES (?, NULL)", [(x,) for x in term_ids])
 
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
         cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
@@ -156,7 +167,17 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
                 SELECT *
                 FROM statements
                 WHERE subject IN (SELECT DISTINCT parent FROM terms)
-                  AND predicate IN (SELECT predicate FROM predicates)"""
+                  AND predicate IN (SELECT predicate FROM predicates)
+                  AND value IS NOT NULL"""
+        )
+        cur.execute(
+            """
+                INSERT INTO tmp.extract
+                SELECT *
+                FROM statements
+                WHERE subject IN (SELECT DISTINCT parent FROM terms)
+                  AND predicate IN (SELECT predicate FROM predicates)
+                  AND object NOT LIKE '_:%'"""
         )
 
         # Create esc function
@@ -166,7 +187,20 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
         # Reset row factory
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        return get_ttl(cur)
+        ttl = "\n".join(get_ttl(cur))
+        if fmt.lower() == "ttl":
+            return ttl
+
+        # Otherwise the format is JSON
+        graph = Graph()
+        graph.parse(data=ttl, format="turtle")
+
+        # Create the context with prefixes
+        cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
+        context = {}
+        for row in cur.fetchall():
+            context[row["prefix"]] = {"@id": row["base"], "@type": "@id"}
+        return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")
 
 
 def get_ttl(cur):
