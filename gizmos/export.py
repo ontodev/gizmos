@@ -55,7 +55,7 @@ def main():
         "-P", "--predicates", help="File containing CURIEs of predicates to include",
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, json, html)", default="tsv")
-    p.add_argument("-s", "--split", help="Character to split multiple values on", default=", ")
+    p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
     p.add_argument(
         "-n",
@@ -132,7 +132,9 @@ def get_iri(prefixes, term):
 def get_objects(cur, prefixes, term, predicate_ids):
     """Get a dict of predicate label -> objects. The object will either be the term ID or label,
     when the label exists."""
-    predicates_str = ", ".join([f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]])
+    predicates_str = ", ".join(
+        [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
+    )
     term_objects = defaultdict(list)
     cur.execute(
         f"""SELECT DISTINCT predicate, s.object AS object, l.label AS object_label
@@ -244,7 +246,9 @@ def get_term_details(cur, prefixes, term, predicate_ids):
 def get_values(cur, term, predicate_ids):
     """Get a dict of predicate label -> literal values. When use_json is true, the value will be
     {"@value": value}."""
-    predicates_str = ", ".join([f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]])
+    predicates_str = ", ".join(
+        [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
+    )
     term_values = defaultdict(list)
     cur.execute(
         f"""SELECT DISTINCT predicate, value FROM statements s
@@ -261,7 +265,7 @@ def get_values(cur, term, predicate_ids):
     return term_values
 
 
-def render_html(value_formats, details, split=", ", no_headers=False):
+def render_html(value_formats, details, split="|", no_headers=False):
     """Render an HTML table."""
     # HTML Headers & CSS
     head = [
@@ -333,7 +337,7 @@ def render_html(value_formats, details, split=", ", no_headers=False):
     return render(None, html)
 
 
-def render_output(value_formats, details, fmt, split=", ", no_headers=False):
+def render_output(value_formats, details, fmt, split="|", no_headers=False):
     """Render the string output based on the format."""
     fmt = fmt.lower()
     if fmt == "tsv":
@@ -346,7 +350,7 @@ def render_output(value_formats, details, fmt, split=", ", no_headers=False):
         return json.dumps(details, indent=4)
 
 
-def render_table(value_formats, details, separator, split=", ", no_headers=False):
+def render_table(value_formats, details, separator, split="|", no_headers=False):
     """Render a TSV or CSV table."""
     # First fix the output to be writable by DictWriter
     rows = []
@@ -384,7 +388,9 @@ def render_table(value_formats, details, separator, split=", ", no_headers=False
     return output.getvalue()
 
 
-def export_terms(database, terms, predicates, fmt, split=", ", default_value_format="IRI", no_headers=False):
+def export_terms(
+    database, terms, predicates, fmt, split="|", default_value_format="IRI", no_headers=False
+):
     """Retrieve details for given terms and render in the given format."""
     # Validate default format
     if default_value_format not in ["CURIE", "IRI", "label"]:

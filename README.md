@@ -41,6 +41,8 @@ For more fine grained control of how objects are output, you can include value f
 
 Any time the predicate doesn't have a value format, the value format will be the `-V` value format (IRI when not included). Note that the value formats above can also be used in `-p` and `-P`.
 
+If an ontology term has more than one value for a given predicate, it will be returned as a pipe-separated list (in JSON, it will be returned as an array). You can specify a different character to split multiple values on with `-s <char>`/`--split <char>`, for example `-s ", "` for a comma-separated list.
+
 If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates, each on one line.
 
 ### `gizmos.extract`
