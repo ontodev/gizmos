@@ -39,7 +39,7 @@ For more fine grained control of how objects are output, you can include value f
 * `CURIE`: the CURIE
 * `IRI`: the full IRI
 
-Any time the predicate doesn't have a value format, the value format will be the `-V` value format (IRI when not included).
+Any time the predicate doesn't have a value format, the value format will be the `-V` value format (IRI when not included). Note that the value formats above can also be used in `-p` and `-P`.
 
 If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates, each on one line.
 
