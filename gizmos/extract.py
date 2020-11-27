@@ -4,6 +4,7 @@ import sqlite3
 import sys
 
 from argparse import ArgumentParser
+from .helpers import dict_factory, get_terms
 
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
@@ -53,36 +54,18 @@ def main():
 
 def extract(args):
     # Get required terms
-    terms = []
-    if args.term:
-        terms = args.term
-    if args.terms:
-        with open(args.terms, "r") as f:
-            terms_from_file = [x.strip() for x in f.readlines()]
-            terms.extend(terms_from_file)
-
+    terms = get_terms(args.term, args.terms)
     if not terms:
         logging.critical("One or more term(s) must be specified with --term or --terms")
         sys.exit(1)
 
     # Maybe get predicates to include
-    predicate_ids = args.predicate or []
-    if args.predicates:
-        with open(args.predicates, "r") as f:
-            predicate_ids.extend([x.strip() for x in f.readlines()])
+    predicate_ids = get_terms(args.predicate, args.predicates)
 
     ttl = "\n".join(
         extract_terms(args.database, terms, predicate_ids, no_hierarchy=args.no_hierarchy)
     )
     return ttl
-
-
-def dict_factory(cursor, row):
-    """Create a dict factory for sqlite cursor"""
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
 
 
 def escape(curie):

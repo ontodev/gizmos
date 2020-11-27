@@ -13,9 +13,39 @@ There are some dependencies that are test-only (e.g., will not be listed in the 
 
 ## Modules
 
+Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
+
+### `gizmos.export`
+
+The `export` module creates a table (default TSV) or JSON output containing the terms and their predicates written to stdout.
+```
+python3 -m gizmos.export -d [path-to-database] -t [term] > [output-tsv]
+```
+
+The `term` should be the CURIE of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE on one line.
+
+You can specify a format other than TSV by using the `-f <format>`/`--format <format>` option. The following formats are supported:
+* TSV
+* CSV
+* HTML
+* JSON
+
+By default, for all formats other than JSON, headers are included. The headers are the predicate labels. If you wish to not include headers, include `-n`/`--no-headers`.
+
+You can also specify the subset of predicates you wish to include using the `-p <term>`/`--predicate <term>` option. The `term` should be the term CURIE or the term label. Whatever you input will be used as the header for that column. The values in the column will be string values (for literal annotations) or IRIs (for objects and IRI annotations). If you want to use CURIEs instead of full IRIs, include `-V CURIE`/`--values CURIE` or, for labels, `-V label`/`--values label`.
+
+For more fine grained control of how objects are output, you can include value formats in the predicate label as such: `label [format]` (e.g., `rdfs:subClassOf [CURIE]`). The following formats are supported:
+* `label`: label when available, or the CURIE otherwise
+* `CURIE`: the CURIE
+* `IRI`: the full IRI
+
+Any time the predicate doesn't have a value format, the value format will be the `-V` value format (IRI when not included).
+
+If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates, each on one line.
+
 ### `gizmos.extract`
 
-The `extract` module creates a TTL file containing the term, predicates, and ancestors written to stdout from a SQL database. The SQL database should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure it is in the right format. The database is specified by `-d`/`--database`
+The `extract` module creates a TTL file containing the term, predicates, and ancestors written to stdout.
 ```
 python3 extract.py -d [path-to-database] -t [term] > [output-html]
 ```
@@ -28,7 +58,7 @@ You may also specify which predicates you would like to include with `-p <curie>
 
 ### `gizmos.tree`
 
-The `tree` module produces a CGI tree browser for a given term contained in a SQL database. The SQL database should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure it is in the right format.
+The `tree` module produces a CGI tree browser for a given term contained in a SQL database.
 
 Usage in the command line:
 ```
