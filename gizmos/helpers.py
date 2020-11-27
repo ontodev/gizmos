@@ -1,5 +1,3 @@
-import logging
-
 # Misc. utility methods for gizmos
 
 
