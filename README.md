@@ -48,7 +48,7 @@ If you have many predicates to include, you can use `-P <file>`/`--predicates <f
 
 The `extract` module creates a TTL or JSON-LD file containing the term, predicates, and ancestors written to stdout.
 ```
-python3 extract.py -d [path-to-database] -t [term] > [output-html]
+python3 extract.py -d [path-to-database] -t [term] > [output-ttl]
 ```
 
 For JSON-LD, you must include `-f JSON-LD`/`--format JSON-LD`.
