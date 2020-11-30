@@ -244,7 +244,7 @@ def get_values(cur, term, predicate_ids):
     return term_values
 
 
-def render_html(prefixes, value_formats, predicate_ids, details, split="|", no_headers=False):
+def render_html(prefixes, value_formats, predicate_ids, details, no_headers=False):
     """Render an HTML table."""
     # Reverse ID dict
     predicate_labels = {v: k for k, v in predicate_ids.items()}
@@ -338,7 +338,7 @@ def render_output(
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
         return render_html(
-            prefixes, value_formats, predicate_ids, details, split=split, no_headers=no_headers
+            prefixes, value_formats, predicate_ids, details, no_headers=no_headers
         )
     else:
         raise Exception("Invalid format: " + fmt)

@@ -1,3 +1,6 @@
+import logging
+
+
 def add_labels(cur):
     """Create a temporary labels table. If a term does not have a label, the label is the ID."""
     # Create a tmp labels table
@@ -37,7 +40,7 @@ def get_ids(cur, id_or_labels):
             if res:
                 ids.append(id_or_label)
             else:
-                raise Exception(f"Term '{id_or_label}' does not exist in database")
+                logging.warning(f" '{id_or_label}' does not exist in database")
     return ids
 
 
