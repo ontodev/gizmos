@@ -74,6 +74,8 @@ This can be useful when writing scripts that return trees from different databas
 
 If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
 
+The title displayed in the HTML output is the database file name. If you'd like to override this, you can use the `-t <title>`/`--title <title>` option.
+
 #### Tree Links
 
 The links in the tree return query strings with the ID of the term to browse all the terms in the tree:
