@@ -145,27 +145,26 @@ def get_objects(cur, prefixes, term, predicate_ids):
 
 
 def get_predicate_ids(cur, id_or_labels=None):
-    """Create a map of predicate ID -> label or full header (if the header has a value format)."""
+    """Create a map of predicate label or full header (if the header has a value format) -> ID."""
     predicate_ids = {}
     if id_or_labels:
         for id_or_label in id_or_labels:
-            if id_or_label in ["CURIE", "IRI", "label"]:
-                predicate_ids[id_or_label] = id_or_label
-                continue
-            full_header = id_or_label
             m = re.match(r"(.+) \[.+]$", id_or_label)
             if m:
                 id_or_label = m.group(1)
+            if id_or_label in ["CURIE", "IRI", "label"]:
+                predicate_ids[id_or_label] = id_or_label
+                continue
             cur.execute(f"SELECT term FROM labels WHERE label = '{id_or_label}'")
             res = cur.fetchone()
             if res:
-                predicate_ids[res["term"]] = full_header
+                predicate_ids[res["term"]] = id_or_label
             else:
                 # Make sure this exists as an ID
                 cur.execute(f"SELECT label FROM labels WHERE term = '{id_or_label}'")
                 res = cur.fetchone()
                 if res:
-                    predicate_ids[id_or_label] = full_header
+                    predicate_ids[id_or_label] = id_or_label
                 else:
                     logging.warning(f"'{id_or_label}' does not exist in database")
         return predicate_ids
@@ -249,9 +248,7 @@ def get_values(cur, term, predicate_ids):
 
 def render_html(prefixes, value_formats, predicate_ids, details, standalone=True, no_headers=False):
     """Render an HTML table."""
-    # Reverse ID dict
-    predicate_labels = {v: k for k, v in predicate_ids.items()}
-
+    predicate_labels = {v: k for k,v in predicate_ids.items()}
     # Create the prefix element
     pref_strs = []
     for prefix, base in prefixes.items():
@@ -260,13 +257,9 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
     table = ["table", {"class": "table table-striped", "prefix": pref_str}]
 
     # Get headers - in order
-    include_headers = set()
-    for d in details.values():
-        include_headers.update(set(d.keys()))
     headers = []
     for k in value_formats.keys():
-        if k in include_headers:
-            headers.append(k)
+        headers.append(k)
 
     if not no_headers:
         # Table headers
@@ -282,9 +275,15 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
     for term, detail in details.items():
         tr = ["tr", {"resource": term}]
         for h in headers:
-            predicate_id = predicate_labels[h]
+            m = re.match(r"(.+) \[.+]", h)
+            if m:
+                pred_label = m.group(1)
+            else:
+                pred_label = h
+
+            predicate_id = predicate_labels[pred_label]
             value_format = value_formats[h]
-            vo_list = detail.get(h)
+            vo_list = detail.get(pred_label)
             if not vo_list:
                 tr.append(["td"])
                 continue
@@ -353,7 +352,12 @@ def render_table(value_formats, details, separator, split="|", no_headers=False)
     for d in details.values():
         row = {}
         for header, value_format in value_formats.items():
-            value = d.get(header)
+            m = re.match(r"(.+) \[.+]", header)
+            if m:
+                pred_label = m.group(1)
+            else:
+                pred_label = header
+            value = d.get(pred_label)
             if not value:
                 continue
             if isinstance(value, list):
@@ -367,13 +371,9 @@ def render_table(value_formats, details, separator, split="|", no_headers=False)
         rows.append(row)
 
     # Then get headers - in order
-    include_headers = set()
-    for r in rows:
-        include_headers.update(set(r.keys()))
     headers = []
     for k in value_formats.keys():
-        if k in include_headers:
-            headers.append(k)
+        headers.append(k)
 
     # Finally write to string
     output = io.StringIO()
@@ -415,7 +415,7 @@ def export_terms(
             predicate_ids = {default_value_format: default_value_format}
             value_formats = {default_value_format: default_value_format.lower()}
             predicate_ids.update(get_predicate_ids(cur))
-            predicate_id_str = ", ".join([f"'{x}'" for x in predicate_ids])
+            predicate_id_str = ", ".join([f"'{x}'" for x in predicate_ids.keys()])
             cur.execute(f"SELECT DISTINCT label FROM labels WHERE term IN ({predicate_id_str})")
             for row in cur.fetchall():
                 value_formats[row["label"]] = default_value_format.lower()
