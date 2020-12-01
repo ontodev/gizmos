@@ -595,7 +595,7 @@ def term2rdfa(
         term = [
             "div",
             {"resource": "owl:Thing"},
-            ["div", {"class": "row"}, ["h2", title + " Browser"]],
+            ["div", {"class": "row"}, ["h2", title]],
         ]
         if si:
             # If ontology IRI, add it to the page
@@ -729,7 +729,7 @@ def terms2rdfa(
     data = {"labels": {}}
 
     if not title:
-        title = treename
+        title = treename + " Browser"
 
     # HTML Headers & CSS
     head = [
@@ -751,7 +751,7 @@ def terms2rdfa(
             },
         ],
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
-        ["title", data["labels"].get(term_ids[0], title + " Browser")],
+        ["title", data["labels"].get(term_ids[0], title)],
         [
             "style",
             """
