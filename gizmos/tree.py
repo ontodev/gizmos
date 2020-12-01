@@ -610,7 +610,7 @@ def terms2rdfa(
 
     # Maybe find a * in the IDs that represents all remaining predicates
     predicate_ids_split = None
-    if "*" in predicate_ids:
+    if predicate_ids and "*" in predicate_ids:
         before = []
         after = []
         found = False

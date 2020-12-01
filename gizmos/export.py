@@ -331,15 +331,12 @@ def render_output(
     prefixes, value_formats, predicate_ids, details, fmt, split="|", no_headers=False
 ):
     """Render the string output based on the format."""
-    fmt = fmt.lower()
     if fmt == "tsv":
         return render_table(value_formats, details, "\t", split=split, no_headers=no_headers)
     elif fmt == "csv":
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
-        return render_html(
-            prefixes, value_formats, predicate_ids, details, no_headers=no_headers
-        )
+        return render_html(prefixes, value_formats, predicate_ids, details, no_headers=no_headers)
     else:
         raise Exception("Invalid format: " + fmt)
 
@@ -386,6 +383,7 @@ def export_terms(
     database, terms, predicates, fmt, split="|", default_value_format="IRI", no_headers=False
 ):
     """Retrieve details for given terms and render in the given format."""
+
     # Validate default format
     if default_value_format not in ["CURIE", "IRI", "label"]:
         raise Exception(
