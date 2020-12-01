@@ -2,7 +2,6 @@
 
 import logging
 import os
-import re
 import sqlite3
 import sys
 
@@ -34,6 +33,7 @@ def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
     p.add_argument("db", help="SQLite database")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
+    p.add_argument("-t", "--title", help="Optional tree title")
     p.add_argument("-p", "--predicate", action="append", help="CURIE of predicate to include")
     p.add_argument("-P", "--predicates", help="File containing CURIEs of predicates to include")
     p.add_argument(
@@ -63,9 +63,15 @@ def main():
         if args.include_db:
             href += "&db={db}"
 
+    if args.title:
+        treename = args.title
+    else:
+        treename = os.path.splitext(os.path.basename(args.db))[0]
+
     # Run tree and write HTML to stdout
     sys.stdout.write(
         tree(
+            treename,
             args.db,
             args.term,
             href=href,
@@ -76,9 +82,8 @@ def main():
 
 
 def tree(
-    db, term, href="?id={curie}", predicate_ids=None, include_search=False,
+    treename, db, term, href="?id={curie}", predicate_ids=None, include_search=False,
 ):
-    treename = os.path.splitext(os.path.basename(db))[0]
     if term:
         term = [term]
     else:
@@ -95,6 +100,114 @@ def tree(
             predicate_ids=predicate_ids,
             include_search=include_search,
         )
+
+
+def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term={curie}"):
+    """Create a hiccup-style vector for the annotation on a term."""
+    # The subjects in the stanza that are of type owl:Axiom:
+    annotation_bnodes = set()
+    for row in stanza:
+        if row["predicate"] == "owl:annotatedSource":
+            annotation_bnodes.add(row["subject"])
+
+    # Annotations, etc. on the right-hand side for the subjects contained in
+    # annotation_bnodes:
+    annotations = {}
+    for row in stanza:
+        subject = row["subject"]
+        if subject not in annotation_bnodes:
+            continue
+        if subject in annotations:
+            details = annotations[subject]
+        else:
+            details = {}
+        predicate = row["predicate"]
+        obj = row["object"]
+        value = row["value"]
+        if predicate == "rdf:type":
+            continue
+        elif predicate == "owl:annotatedSource":
+            details["source"] = obj
+        elif predicate == "owl:annotatedProperty":
+            details["predicate"] = obj
+        elif predicate == "owl:annotatedTarget":
+            if obj:
+                details["target_object"] = obj
+            if value:
+                details["target_value"] = value
+        else:
+            details["annotation"] = row
+        annotations[subject] = details
+
+    spv2annotation = {}
+    for bnode, details in annotations.items():
+        source = details["source"]
+        predicate = details["predicate"]
+        target = details.get("target_object", None) or details.get("target_value", None)
+        annotation = details["annotation"]
+        if source in spv2annotation:
+            pred2val = spv2annotation[source]
+        else:
+            pred2val = {}
+        if predicate in pred2val:
+            values = pred2val[predicate]
+        else:
+            values = {}
+        if target in values:
+            ax_annotations = values[target]
+        else:
+            ax_annotations = {}
+
+        ann_predicate = annotation["predicate"]
+        if ann_predicate in ax_annotations:
+            anns = ax_annotations[ann_predicate]
+        else:
+            anns = []
+        anns.append(annotation)
+
+        ax_annotations[ann_predicate] = anns
+        values[target] = ax_annotations
+        pred2val[predicate] = values
+        spv2annotation[source] = pred2val
+
+    # The initial hiccup, which will be filled in later:
+    items = ["ul", {"id": "annotations", "class": "col-md"}]
+    labels = data["labels"]
+
+    # s2 maps the predicates of the given term to their corresponding rows (there can be more than
+    # one row per predicate):
+    s2 = defaultdict(list)
+    for row in stanza:
+        if row["subject"] == term_id:
+            s2[row["predicate"]].append(row)
+    pcs = list(s2.keys())
+
+    # Loop through the rows of the stanza that correspond to the predicates of the given term:
+    for predicate in predicate_ids:
+        if predicate not in pcs:
+            continue
+        anchor = [
+            "a",
+            {"href": href.format(curie=predicate, db=treename)},
+            labels.get(predicate, predicate),
+        ]
+        # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
+        os = []
+        for row in s2[predicate]:
+            # Convert the `data` map, that has entries for the tree and for a list of the labels
+            # corresponding to all of the curies in the stanza, into a hiccup object `o`:
+            o = ["li", row2o(stanza, data, row)]
+
+            # Check for axiom annotations and create nested
+            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
+            if nest:
+                o += nest
+
+            # Append the `o` to the list of `os`:
+            os.append(o)
+        if os:
+            items.append(["li", anchor, ["ul"] + os])
+    return items
 
 
 def build_nested(treename, data, labels, spv2annotation, source, row, ele, href="?id={curie}"):
@@ -384,6 +497,7 @@ def term2rdfa(
     )
     for row in cur:
         labels[row["subject"]] = row["value"]
+    labels["owl:Thing"] = "Class"
 
     obsolete = []
     cur.execute(
@@ -422,123 +536,66 @@ def term2rdfa(
             label = value
             break
 
-    # The subjects in the stanza that are of type owl:Axiom:
-    annotation_bnodes = set()
-    for row in stanza:
-        if row["predicate"] == "owl:annotatedSource":
-            annotation_bnodes.add(row["subject"])
-
-    # Annotations, etc. on the right-hand side for the subjects contained in
-    # annotation_bnodes:
-    annotations = {}
-    for row in stanza:
-        subject = row["subject"]
-        if subject not in annotation_bnodes:
-            continue
-        if subject in annotations:
-            details = annotations[subject]
-        else:
-            details = {}
-        predicate = row["predicate"]
-        obj = row["object"]
-        value = row["value"]
-        if predicate == "rdf:type":
-            continue
-        elif predicate == "owl:annotatedSource":
-            details["source"] = obj
-        elif predicate == "owl:annotatedProperty":
-            details["predicate"] = obj
-        elif predicate == "owl:annotatedTarget":
-            if obj:
-                details["target_object"] = obj
-            if value:
-                details["target_value"] = value
-        else:
-            details["annotation"] = row
-        annotations[subject] = details
-
-    spv2annotation = {}
-    for bnode, details in annotations.items():
-        source = details["source"]
-        predicate = details["predicate"]
-        target = details.get("target_object", None) or details.get("target_value", None)
-        annotation = details["annotation"]
-        if source in spv2annotation:
-            pred2val = spv2annotation[source]
-        else:
-            pred2val = {}
-        if predicate in pred2val:
-            values = pred2val[predicate]
-        else:
-            values = {}
-        if target in values:
-            ax_annotations = values[target]
-        else:
-            ax_annotations = {}
-
-        ann_predicate = annotation["predicate"]
-        if ann_predicate in ax_annotations:
-            anns = ax_annotations[ann_predicate]
-        else:
-            anns = []
-        anns.append(annotation)
-
-        ax_annotations[ann_predicate] = anns
-        values[target] = ax_annotations
-        pred2val[predicate] = values
-        spv2annotation[source] = pred2val
-
     subject = term_id
     si = curie2iri(prefixes, subject)
     subject_label = label
 
-    # The initial hiccup, which will be filled in later:
-    items = ["ul", {"id": "annotations", "class": "col-md"}]
-
-    # s2 maps the predicates of the given term to their corresponding rows (there can be more than
-    # one row per predicate):
-    s2 = defaultdict(list)
-    for row in stanza:
-        if row["subject"] == term_id:
-            s2[row["predicate"]].append(row)
-    pcs = list(s2.keys())
-
-    # Loop through the rows of the stanza that correspond to the predicates of the given term:
-    for predicate in predicate_ids:
-        if predicate not in pcs:
-            continue
-        anchor = [
-            "a",
-            {"href": href.format(curie=predicate, db=treename)},
-            labels.get(predicate, predicate),
-        ]
-        # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
-        os = []
-        for row in s2[predicate]:
-            # Convert the `data` map, that has entries for the tree and for a list of the labels
-            # corresponding to all of the curies in the stanza, into a hiccup object `o`:
-            o = ["li", row2o(stanza, data, row)]
-
-            # Check for axiom annotations and create nested
-            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
-            if nest:
-                o += nest
-
-            # Append the `o` to the list of `os`:
-            os.append(o)
-        if os:
-            items.append(["li", anchor, ["ul"] + os])
-
     hierarchy = term2tree(data, treename, term_id, href=href)
     h2 = ""  # term2tree(data, treename, term_id)
 
-    term = [
-        "div",
-        {"resource": subject},
-        ["div", {"class": "row"}, ["h2", subject_label]],
-        ["div", {"class": "row"}, ["a", {"href": si}, si]],
-        ["div", {"class": "row", "style": "padding-top: 10px;"}, hierarchy, h2, items],
-    ]
+    if term_id == "owl:Thing":
+        # Try to get the ontology IRI as si
+        si = None
+        cur.execute("SELECT subject FROM statements WHERE object = 'owl:Ontology';")
+        res = cur.fetchone()
+        if res:
+            try:
+                si = curie2iri(prefixes, res["subject"])
+            except:
+                si = res["subject"]
+        items = [
+            "ul",
+            {"id": "annotations", "class": "col-md"},
+            ["p", {"class": "lead"}, "Hello! This is an ontology browser."],
+            [
+                "p",
+                "An ",
+                [
+                    "a",
+                    {"href": "https://en.wikipedia.org/wiki/Ontology_(information_science)"},
+                    "ontology",
+                ],
+                " is a terminology system designed for both humans and machines to read. Click the",
+                " links on the left to browse the hierarchy of terms. Terms have parent terms, ",
+                "child terms, annotations, and ",
+                [
+                    "a",
+                    {"href": "https://en.wikipedia.org/wiki/Web_Ontology_Language"},
+                    "logical axioms",
+                ],
+                ". The page for each term is also machine-readable using ",
+                ["a", {"href": "https://en.wikipedia.org/wiki/RDFa"}, "RDFa"],
+                ".",
+            ],
+        ]
+        term = [
+            "div",
+            {"resource": "owl:Thing"},
+            ["div", {"class": "row"}, ["h2", treename + " Browser"]],
+        ]
+        if si:
+            # If ontology IRI, add it to the page
+            term.append(["div", {"class": "row"}, ["a", {"href": si}, si]])
+        term.append(["div", {"class": "row", "style": "padding-top: 10px;"}, hierarchy, h2, items])
+    else:
+        items = annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href=href)
+        term = [
+            "div",
+            {"resource": subject},
+            ["div", {"class": "row"}, ["h2", subject_label]],
+            ["div", {"class": "row"}, ["a", {"href": si}, si]],
+            ["div", {"class": "row", "style": "padding-top: 10px;"}, hierarchy, h2, items],
+        ]
     return ps, term
 
 
@@ -611,7 +668,7 @@ def terms2rdfa(
 
     # Maybe find a * in the IDs that represents all remaining predicates
     predicate_ids_split = None
-    if "*" in predicate_ids:
+    if predicate_ids and "*" in predicate_ids:
         before = []
         after = []
         found = False
