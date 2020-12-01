@@ -66,7 +66,7 @@ def main():
     if args.title:
         treename = args.title
     else:
-        treename = os.path.splitext(os.path.basename(args.db))[0]
+        treename = os.path.splitext(os.path.basename(args.db))[0] + "Browser"
 
     # Run tree and write HTML to stdout
     sys.stdout.write(
@@ -581,7 +581,7 @@ def term2rdfa(
         term = [
             "div",
             {"resource": "owl:Thing"},
-            ["div", {"class": "row"}, ["h2", treename + " Browser"]],
+            ["div", {"class": "row"}, ["h2", treename]],
         ]
         if si:
             # If ontology IRI, add it to the page
@@ -725,7 +725,7 @@ def terms2rdfa(
             },
         ],
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
-        ["title", data["labels"].get(term_ids[0], treename + " Browser")],
+        ["title", data["labels"].get(term_ids[0], treename)],
         [
             "style",
             """
