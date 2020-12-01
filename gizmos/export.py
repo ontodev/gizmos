@@ -55,6 +55,7 @@ def main():
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
+    p.add_argument("-c", "--contents-only", action="store_true", help="If provided with HTML format, render HTML without roots")
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
     p.add_argument(
         "-n",
@@ -74,7 +75,7 @@ def export(args):
         sys.exit(1)
     predicates = get_terms(args.predicate, args.predicates)
     return export_terms(
-        args.database, terms, predicates, args.format, split=args.split, no_headers=args.no_headers
+        args.database, terms, predicates, args.format, standalone=not args.contents_only, split=args.split, no_headers=args.no_headers
     )
 
 
@@ -101,6 +102,8 @@ def get_html_value(value_format, predicate_id, vo):
 
 def get_iri(prefixes, term):
     """Get the IRI from a CURIE."""
+    if term.startswith("<"):
+        return term.lstrip("<").rstrip(">")
     prefix = term.split(":")[0]
     namespace = prefixes.get(prefix)
     if not namespace:
@@ -164,7 +167,7 @@ def get_predicate_ids(cur, id_or_labels=None):
                 if res:
                     predicate_ids[id_or_label] = full_header
                 else:
-                    raise Exception(f"Term '{id_or_label}' does not exist in database")
+                    logging.warning(f"'{id_or_label}' does not exist in database")
         return predicate_ids
 
     cur.execute(
@@ -244,32 +247,17 @@ def get_values(cur, term, predicate_ids):
     return term_values
 
 
-def render_html(prefixes, value_formats, predicate_ids, details, no_headers=False):
+def render_html(prefixes, value_formats, predicate_ids, details, standalone=True, no_headers=False):
     """Render an HTML table."""
     # Reverse ID dict
     predicate_labels = {v: k for k, v in predicate_ids.items()}
-    # HTML Headers & CSS
-    head = [
-        "head",
-        ["meta", {"charset": "utf-8"}],
-        [
-            "meta",
-            {
-                "name": "viewport",
-                "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
-            },
-        ],
-        [
-            "link",
-            {
-                "rel": "stylesheet",
-                "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
-                "crossorigin": "anonymous",
-            },
-        ],
-    ]
 
-    table = ["table", {"class": "table table-striped"}]
+    # Create the prefix element
+    pref_strs = []
+    for prefix, base in prefixes.items():
+        pref_strs.append(f"{prefix}: {base}")
+    pref_str = "\n".join(pref_strs)
+    table = ["table", {"class": "table table-striped", "prefix": pref_str}]
 
     # Get headers - in order
     include_headers = set()
@@ -316,19 +304,36 @@ def render_html(prefixes, value_formats, predicate_ids, details, no_headers=Fals
         tbody.append(tr)
     table.append(tbody)
 
-    # Create the prefix element
-    pref_strs = []
-    for prefix, base in prefixes.items():
-        pref_strs.append(f"{prefix}: {base}")
-    pref_str = "\n".join(pref_strs)
-
     # Render full HTML
-    html = ["html", head, ["body", {"prefix": pref_str}, table]]
+    if standalone:
+        # HTML Headers & CSS
+        head = [
+            "head",
+            ["meta", {"charset": "utf-8"}],
+            [
+                "meta",
+                {
+                    "name": "viewport",
+                    "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
+                },
+            ],
+            [
+                "link",
+                {
+                    "rel": "stylesheet",
+                    "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
+                    "crossorigin": "anonymous",
+                },
+            ],
+        ]
+        html = ["html", head, ["body", table]]
+    else:
+        html = table
     return render(None, html)
 
 
 def render_output(
-    prefixes, value_formats, predicate_ids, details, fmt, split="|", no_headers=False
+    prefixes, value_formats, predicate_ids, details, fmt, split="|", standalone=True, no_headers=False
 ):
     """Render the string output based on the format."""
     if fmt == "tsv":
@@ -336,7 +341,7 @@ def render_output(
     elif fmt == "csv":
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
-        return render_html(prefixes, value_formats, predicate_ids, details, no_headers=no_headers)
+        return render_html(prefixes, value_formats, predicate_ids, details, standalone=standalone, no_headers=no_headers)
     else:
         raise Exception("Invalid format: " + fmt)
 
@@ -380,7 +385,7 @@ def render_table(value_formats, details, separator, split="|", no_headers=False)
 
 
 def export_terms(
-    database, terms, predicates, fmt, split="|", default_value_format="IRI", no_headers=False
+    database, terms, predicates, fmt, split="|", standalone=True, default_value_format="IRI", no_headers=False
 ):
     """Retrieve details for given terms and render in the given format."""
 
@@ -441,7 +446,7 @@ def export_terms(
             details[term] = term_details
 
     return render_output(
-        prefixes, value_formats, predicate_ids, details, fmt, split=split, no_headers=no_headers
+        prefixes, value_formats, predicate_ids, details, fmt, split=split, standalone=standalone, no_headers=no_headers
     )
 
 

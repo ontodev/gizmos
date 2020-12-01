@@ -46,6 +46,7 @@ def main():
     p.add_argument(
         "-s", "--include-search", help="If provided, include a search bar", action="store_true"
     )
+    p.add_argument("-c", "--contents-only", action="store_true", help="If provided, render HTML without the roots")
     args = p.parse_args()
 
     # Maybe get predicates to include
@@ -72,12 +73,13 @@ def main():
             href=href,
             predicate_ids=predicate_ids,
             include_search=args.include_search,
+            standalone=not args.contents_only
         )
     )
 
 
 def tree(
-    db, term, href="?id={curie}", title=None, predicate_ids=None, include_search=False,
+    db, term, href="?id={curie}", title=None, predicate_ids=None, include_search=False, standalone=True,
 ):
     treename = os.path.splitext(os.path.basename(db))[0]
 
@@ -97,6 +99,7 @@ def tree(
             href=href,
             predicate_ids=predicate_ids,
             include_search=include_search,
+            standalone=standalone
         )
 
 
@@ -663,6 +666,7 @@ def terms2rdfa(
     href="?id={curie}",
     predicate_ids=None,
     include_search=False,
+    standalone=True,
 ):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
@@ -731,145 +735,13 @@ def terms2rdfa(
     if not title:
         title = treename + " Browser"
 
-    # HTML Headers & CSS
-    head = [
-        "head",
-        ["meta", {"charset": "utf-8"}],
-        [
-            "meta",
-            {
-                "name": "viewport",
-                "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
-            },
-        ],
-        [
-            "link",
-            {
-                "rel": "stylesheet",
-                "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
-                "crossorigin": "anonymous",
-            },
-        ],
-        ["link", {"rel": "stylesheet", "href": "../style.css"}],
-        ["title", data["labels"].get(term_ids[0], title)],
-        [
-            "style",
-            """
-    #annotations {
-      padding-left: 1em;
-      list-style-type: none !important;
-    }
-    #annotations ul {
-      padding-left: 3em;
-      list-style-type: circle !important;
-    }
-    #annotations ul ul {
-      padding-left: 2em;
-      list-style-type: none !important;
-    }
-    .hierarchy {
-      padding-left: 0em;
-      list-style-type: none !important;
-    }
-    .hierarchy ul {
-      padding-left: 1em;
-      list-style-type: none !important;
-    }
-    .hierarchy ul.multiple-children > li > ul {
-      border-left: 1px dotted #ddd;
-    }
-    .hierarchy .children {
-      border-left: none;
-      margin-left: 2em;
-      text-indent: -1em;
-    }
-    .hierarchy .children li::before {
-      content: "\2022";
-      color: #ddd;
-      display: inline-block;
-      width: 0em;
-      margin-left: -1em;
-    }
-    #nonpeptides .tt-dataset {
-      max-height: 300px;
-      overflow-y: scroll;
-    }
-    span.twitter-typeahead .tt-menu {
-      cursor: pointer;
-    }
-    .dropdown-menu, span.twitter-typeahead .tt-menu {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      z-index: 1000;
-      display: none;
-      float: left;
-      min-width: 160px;
-      padding: 5px 0;
-      margin: 2px 0 0;
-      font-size: 1rem;
-      color: #373a3c;
-      text-align: left;
-      list-style: none;
-      background-color: #fff;
-      background-clip: padding-box;
-      border: 1px solid rgba(0, 0, 0, 0.15);
-      border-radius: 0.25rem; }
-    span.twitter-typeahead .tt-suggestion {
-      display: block;
-      width: 100%;
-      padding: 3px 20px;
-      clear: both;
-      font-weight: normal;
-      line-height: 1.5;
-      color: #373a3c;
-      text-align: inherit;
-      white-space: nowrap;
-      background: none;
-      border: 0; }
-    span.twitter-typeahead .tt-suggestion:focus,
-    .dropdown-item:hover,
-    span.twitter-typeahead .tt-suggestion:hover {
-        color: #2b2d2f;
-        text-decoration: none;
-        background-color: #f5f5f5; }
-    span.twitter-typeahead .active.tt-suggestion,
-    span.twitter-typeahead .tt-suggestion.tt-cursor,
-    span.twitter-typeahead .active.tt-suggestion:focus,
-    span.twitter-typeahead .tt-suggestion.tt-cursor:focus,
-    span.twitter-typeahead .active.tt-suggestion:hover,
-    span.twitter-typeahead .tt-suggestion.tt-cursor:hover {
-        color: #fff;
-        text-decoration: none;
-        background-color: #0275d8;
-        outline: 0; }
-    span.twitter-typeahead .disabled.tt-suggestion,
-    span.twitter-typeahead .disabled.tt-suggestion:focus,
-    span.twitter-typeahead .disabled.tt-suggestion:hover {
-        color: #818a91; }
-    span.twitter-typeahead .disabled.tt-suggestion:focus,
-    span.twitter-typeahead .disabled.tt-suggestion:hover {
-        text-decoration: none;
-        cursor: not-allowed;
-        background-color: transparent;
-        background-image: none;
-        filter: "progid:DXImageTransform.Microsoft.gradient(enabled = false)"; }
-    span.twitter-typeahead {
-      width: 100%; }
-      .input-group span.twitter-typeahead {
-        display: block !important; }
-        .input-group span.twitter-typeahead .tt-menu {
-          top: 2.375rem !important; }""",
-        ],
-    ]
-
     # Create the prefix element
     pref_strs = []
     for prefix, base in all_prefixes:
         pref_strs.append(f"{prefix}: {base}")
     pref_str = "\n".join(pref_strs)
 
-    body = ["body", {"class": "container", "prefix": pref_str}]
+    body = ["div", {"prefix": pref_str}]
     if include_search:
         body.append(
             [
@@ -1050,7 +922,143 @@ def terms2rdfa(
         )
 
     body.append(["script", {"type": "text/javascript"}, js])
-    html = ["html", head, body]
+
+    if standalone:
+        # HTML Headers & CSS
+        head = [
+            "head",
+            ["meta", {"charset": "utf-8"}],
+            [
+                "meta",
+                {
+                    "name": "viewport",
+                    "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
+                },
+            ],
+            [
+                "link",
+                {
+                    "rel": "stylesheet",
+                    "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
+                    "crossorigin": "anonymous",
+                },
+            ],
+            ["link", {"rel": "stylesheet", "href": "../style.css"}],
+            ["title", data["labels"].get(term_ids[0], title)],
+            [
+                "style",
+                """
+        #annotations {
+          padding-left: 1em;
+          list-style-type: none !important;
+        }
+        #annotations ul {
+          padding-left: 3em;
+          list-style-type: circle !important;
+        }
+        #annotations ul ul {
+          padding-left: 2em;
+          list-style-type: none !important;
+        }
+        .hierarchy {
+          padding-left: 0em;
+          list-style-type: none !important;
+        }
+        .hierarchy ul {
+          padding-left: 1em;
+          list-style-type: none !important;
+        }
+        .hierarchy ul.multiple-children > li > ul {
+          border-left: 1px dotted #ddd;
+        }
+        .hierarchy .children {
+          border-left: none;
+          margin-left: 2em;
+          text-indent: -1em;
+        }
+        .hierarchy .children li::before {
+          content: "\2022";
+          color: #ddd;
+          display: inline-block;
+          width: 0em;
+          margin-left: -1em;
+        }
+        #nonpeptides .tt-dataset {
+          max-height: 300px;
+          overflow-y: scroll;
+        }
+        span.twitter-typeahead .tt-menu {
+          cursor: pointer;
+        }
+        .dropdown-menu, span.twitter-typeahead .tt-menu {
+          position: absolute;
+          top: 100%;
+          left: 0;
+          z-index: 1000;
+          display: none;
+          float: left;
+          min-width: 160px;
+          padding: 5px 0;
+          margin: 2px 0 0;
+          font-size: 1rem;
+          color: #373a3c;
+          text-align: left;
+          list-style: none;
+          background-color: #fff;
+          background-clip: padding-box;
+          border: 1px solid rgba(0, 0, 0, 0.15);
+          border-radius: 0.25rem; }
+        span.twitter-typeahead .tt-suggestion {
+          display: block;
+          width: 100%;
+          padding: 3px 20px;
+          clear: both;
+          font-weight: normal;
+          line-height: 1.5;
+          color: #373a3c;
+          text-align: inherit;
+          white-space: nowrap;
+          background: none;
+          border: 0; }
+        span.twitter-typeahead .tt-suggestion:focus,
+        .dropdown-item:hover,
+        span.twitter-typeahead .tt-suggestion:hover {
+            color: #2b2d2f;
+            text-decoration: none;
+            background-color: #f5f5f5; }
+        span.twitter-typeahead .active.tt-suggestion,
+        span.twitter-typeahead .tt-suggestion.tt-cursor,
+        span.twitter-typeahead .active.tt-suggestion:focus,
+        span.twitter-typeahead .tt-suggestion.tt-cursor:focus,
+        span.twitter-typeahead .active.tt-suggestion:hover,
+        span.twitter-typeahead .tt-suggestion.tt-cursor:hover {
+            color: #fff;
+            text-decoration: none;
+            background-color: #0275d8;
+            outline: 0; }
+        span.twitter-typeahead .disabled.tt-suggestion,
+        span.twitter-typeahead .disabled.tt-suggestion:focus,
+        span.twitter-typeahead .disabled.tt-suggestion:hover {
+            color: #818a91; }
+        span.twitter-typeahead .disabled.tt-suggestion:focus,
+        span.twitter-typeahead .disabled.tt-suggestion:hover {
+            text-decoration: none;
+            cursor: not-allowed;
+            background-color: transparent;
+            background-image: none;
+            filter: "progid:DXImageTransform.Microsoft.gradient(enabled = false)"; }
+        span.twitter-typeahead {
+          width: 100%; }
+          .input-group span.twitter-typeahead {
+            display: block !important; }
+            .input-group span.twitter-typeahead .tt-menu {
+              top: 2.375rem !important; }""",
+            ],
+        ]
+        body = ["body", {"class": "container"}, body]
+        html = ["html", head, body]
+    else:
+        html = body
 
     return render(all_prefixes, html, href=href, db=treename)
 
