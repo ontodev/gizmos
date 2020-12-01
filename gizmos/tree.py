@@ -63,17 +63,12 @@ def main():
         if args.include_db:
             href += "&db={db}"
 
-    if args.title:
-        treename = args.title
-    else:
-        treename = os.path.splitext(os.path.basename(args.db))[0] + "Browser"
-
     # Run tree and write HTML to stdout
     sys.stdout.write(
         tree(
-            treename,
             args.db,
             args.term,
+            title=args.title,
             href=href,
             predicate_ids=predicate_ids,
             include_search=args.include_search,
@@ -82,8 +77,10 @@ def main():
 
 
 def tree(
-    treename, db, term, href="?id={curie}", predicate_ids=None, include_search=False,
+    db, term, href="?id={curie}", title=None, predicate_ids=None, include_search=False,
 ):
+    treename = os.path.splitext(os.path.basename(db))[0]
+
     if term:
         term = [term]
     else:
@@ -96,6 +93,7 @@ def tree(
             cur,
             treename,
             term,
+            title=title,
             href=href,
             predicate_ids=predicate_ids,
             include_search=include_search,
@@ -399,7 +397,15 @@ def term2tree(data, treename, term_id, href="?id={curie}"):
 
 
 def term2rdfa(
-    cur, prefixes, treename, stanza, term_id, predicate_ids, href="?id={curie}", add_children=None
+    cur,
+    prefixes,
+    treename,
+    stanza,
+    term_id,
+    predicate_ids,
+    title=None,
+    href="?id={curie}",
+    add_children=None,
 ):
     """Create a hiccup-style HTML vector for the given term."""
     if stanza and len(stanza) == 0:
@@ -543,10 +549,18 @@ def term2rdfa(
     hierarchy = term2tree(data, treename, term_id, href=href)
     h2 = ""  # term2tree(data, treename, term_id)
 
+    if not title:
+        title = treename
+
     if term_id == "owl:Thing":
         # Try to get the ontology IRI as si
         si = None
-        cur.execute("SELECT subject FROM statements WHERE object = 'owl:Ontology';")
+        cur.execute(
+            """SELECT subject FROM statements
+            WHERE subject NOT LIKE '_:%'
+            AND predicate = 'rdf:type'
+            AND object = 'owl:Ontology';"""
+        )
         res = cur.fetchone()
         if res:
             try:
@@ -581,7 +595,7 @@ def term2rdfa(
         term = [
             "div",
             {"resource": "owl:Thing"},
-            ["div", {"class": "row"}, ["h2", treename]],
+            ["div", {"class": "row"}, ["h2", title + " Browser"]],
         ]
         if si:
             # If ontology IRI, add it to the page
@@ -599,7 +613,7 @@ def term2rdfa(
     return ps, term
 
 
-def thing2rdfa(cur, all_prefixes, treename, predicate_ids, href="?id={curie}"):
+def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id={curie}"):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     cur.execute(
@@ -635,13 +649,20 @@ def thing2rdfa(cur, all_prefixes, treename, predicate_ids, href="?id={curie}"):
         stanza,
         "owl:Thing",
         predicate_ids,
+        title=title,
         href=href,
         add_children=add_children,
     )
 
 
 def terms2rdfa(
-    cur, treename, term_ids, href="?id={curie}", predicate_ids=None, include_search=False,
+    cur,
+    treename,
+    term_ids,
+    title=None,
+    href="?id={curie}",
+    predicate_ids=None,
+    include_search=False,
 ):
     """Create a hiccup-style HTML vector for the given terms.
     If there are no terms, create the HTML vector for owl:Thing."""
@@ -699,11 +720,16 @@ def terms2rdfa(
 
             cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
             stanza = cur.fetchall()
-            p, t = term2rdfa(cur, all_prefixes, treename, stanza, term_id, predicate_ids, href=href)
+            p, t = term2rdfa(
+                cur, all_prefixes, treename, stanza, term_id, predicate_ids, title=title, href=href
+            )
             ps.update(p)
             terms.append(t)
 
     data = {"labels": {}}
+
+    if not title:
+        title = treename
 
     # HTML Headers & CSS
     head = [
@@ -725,7 +751,7 @@ def terms2rdfa(
             },
         ],
         ["link", {"rel": "stylesheet", "href": "../style.css"}],
-        ["title", data["labels"].get(term_ids[0], treename)],
+        ["title", data["labels"].get(term_ids[0], title + " Browser")],
         [
             "style",
             """
