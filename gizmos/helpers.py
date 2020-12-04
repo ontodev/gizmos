@@ -1,4 +1,5 @@
 import logging
+import re
 
 
 def add_labels(cur):
@@ -49,6 +50,14 @@ def get_terms(term_list, terms_file):
     terms = term_list or []
     if terms_file:
         with open(terms_file, "r") as f:
-            terms_from_file = [x.strip() for x in f.readlines()]
-            terms.extend(terms_from_file)
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                if not line.strip():
+                    continue
+                m = re.match(r"(.+)\s#.+", line)
+                if m:
+                    terms.append(m.group(1).strip())
+                else:
+                    terms.append(line.strip())
     return terms
