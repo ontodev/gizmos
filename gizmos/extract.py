@@ -122,7 +122,6 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
 
         # Create tmp predicates table
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
-        cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
         if predicate_ids:
             cur.executemany(
                 "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in predicate_ids]
@@ -151,23 +150,6 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
                   SELECT parent, child FROM ancestors"""
             )
 
-        # Add entity type to terms table
-        cur.execute("ALTER TABLE tmp.terms ADD COLUMN type")
-        cur.execute(
-            """UPDATE tmp.terms
-            SET type = (SELECT object FROM statements
-                        WHERE statements.subject = terms.parent AND predicate = 'rdf:type')
-            WHERE EXISTS (SELECT * FROM statements WHERE statements.subject = terms.parent)""")
-
-        # Get remaining types for undeclared classes used in subclass statements (e.g. owl:Thing)
-        cur.execute(
-            """UPDATE tmp.terms
-            SET type = 'owl:Class'
-            WHERE type IS NULL
-             AND parent IN (SELECT object FROM statements WHERE predicate = 'rdfs:subClassOf')
-            """
-        )
-
         cur.execute(
             """CREATE TABLE tmp.extract(
                  stanza TEXT,
@@ -187,17 +169,24 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
             WHERE subject IN (SELECT DISTINCT parent FROM terms) AND predicate = 'rdf:type'"""
         )
 
-        # Insert subclass & subproperty statements
+        # Insert subclass statements:
+        # - parent is a class if it's used in subclass statement
+        # - this allows us to get around undeclared classes, e.g. owl:Thing
         cur.execute(
             """INSERT INTO tmp.extract (stanza, subject, predicate, object)
-            SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
-            FROM terms WHERE child IS NOT NULL AND type = 'owl:Class'"""
+            SELECT DISTINCT t.child, t.child, 'rdfs:subClassOf', t.parent
+            FROM terms t
+            JOIN statements s ON t.parent = s.object
+            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subClassOf'"""
         )
+
+        # Insert subproperty statements (same as above)
         cur.execute(
             """INSERT INTO tmp.extract (stanza, subject, predicate, object)
-            SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
-            FROM terms WHERE child IS NOT NULL
-             AND type IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')"""
+            SELECT DISTINCT t.child, t.child, 'rdfs:subPropertyOf', t.parent
+            FROM terms t
+            JOIN statements s ON t.parent = s.object
+            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subPropertyOf'"""
         )
 
         # Insert literal annotations
