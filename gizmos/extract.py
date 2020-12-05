@@ -161,10 +161,6 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
             """
         )
 
-        cur.execute("SELECT * FROM tmp.terms")
-        for row in cur.fetchall():
-            logging.error(row)
-
         cur.execute(
             """CREATE TABLE tmp.extract(
                  stanza TEXT,
@@ -224,8 +220,8 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
             JOIN statements s2 ON s1.predicate = s2.subject
             WHERE s1.subject IN (SELECT DISTINCT parent FROM terms)
               AND s1.predicate IN (SELECT predicate FROM predicates)
-              AND s2.predicate = 'rdf:type' AND s2.value = 'owl:AnnotationProperty'
-              AND s1.object IS NOT NULL"""
+              AND s2.object = 'owl:AnnotationProperty'
+              AND s1.object NOT NULL"""
         )
 
         # Create esc function
