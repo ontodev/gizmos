@@ -157,7 +157,14 @@ def extract_terms(database, terms, predicate_ids, no_hierarchy=False):
             """UPDATE tmp.terms
             SET type = (SELECT object FROM statements
                         WHERE statements.subject = terms.parent AND predicate = 'rdf:type')
-            WHERE EXISTS (SELECT * FROM statements WHERE statements.subject = terms.parent)
+            WHERE EXISTS (SELECT * FROM statements WHERE statements.subject = terms.parent)""")
+
+        # Get remaining types for undeclared classes used in subclass statements (e.g. owl:Thing)
+        cur.execute(
+            """UPDATE tmp.terms
+            SET type = 'owl:Class'
+            WHERE type IS NULL
+             AND parent IN (SELECT object FROM statements WHERE predicate = 'rdfs:subClassOf')
             """
         )
 
