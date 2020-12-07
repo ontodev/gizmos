@@ -29,6 +29,7 @@ logging.basicConfig(
 OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
 
 top_levels = {
+    "owl:Ontology": "Ontology",
     "owl:Class": "Class",
     "owl:AnnotationProperty": "Annotation Property",
     "owl:DataProperty": "Data Property",
@@ -187,10 +188,13 @@ def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term
     for predicate in predicate_ids:
         if predicate not in pcs:
             continue
+        predicate_label = predicate
+        if predicate.startswith("<"):
+            predicate_label = predicate.lstrip("<").rstrip(">")
         anchor = [
             "a",
             {"href": href.format(curie=predicate, db=treename)},
-            labels.get(predicate, predicate),
+            labels.get(predicate, predicate_label),
         ]
         # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
         objs = []
@@ -644,6 +648,8 @@ def build_tree(
 
 def curie2iri(prefixes, curie):
     """Convert a CURIE to IRI"""
+    if curie.startswith("<"):
+        return curie.lstrip("<").rstrip(">")
     for prefix, base in prefixes:
         if curie.startswith(prefix + ":"):
             return curie.replace(prefix + ":", base)
@@ -674,14 +680,14 @@ def get_entity_type(cur, term_id):
     else:
         entity_type = None
         cur.execute(f"SELECT predicate FROM statements WHERE subject = '{term_id}'")
-        preds = [res[0]["predicate"] for res in cur.fetchall()]
+        preds = [row["predicate"] for row in cur.fetchall()]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
         elif "rdfs:subPropertyOf" in preds:
             return "owl:AnnotationProperty"
         if not entity_type:
             cur.execute(f"SELECT predicate FROM statements WHERE object = '{term_id}'")
-            preds = [res[0]["predicate"] for res in cur.fetchall()]
+            preds = [row["predicate"] for row in cur.fetchall()]
             if "rdfs:subClassOf" in preds:
                 return "owl:Class"
             elif "rdfs:subPropertyOf" in preds:
@@ -833,46 +839,50 @@ def term2rdfa(
     else:
         # Get the top-level for this entity type
         entity_type = term_id
-        if term_id == "owl:Individual":
-            tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
-            cur.execute(
-                f"""SELECT DISTINCT subject FROM statements
-                WHERE subject NOT IN
-                    (SELECT subject FROM statements
-                     WHERE predicate = 'rdf:type'
-                     AND object NOT IN ('owl:Individual', 'owl:NamedIndividual'))
-                AND subject IN
-                    (SELECT subject FROM statements
-                     WHERE predicate = 'rdf:type' AND object NOT IN ({tls}))"""
-            )
-        elif term_id == "rdfs:Datatype":
-            cur.execute(
-                """SELECT DISTINCT subject FROM statements
-                WHERE predicate = 'rdf:type' AND object = 'rdfs:Datatype'"""
-            )
+        if term_id == "owl:Ontology":
+            hierarchy = {term_id: {"parents": [], "children": []}}
+            curies = {term_id}
         else:
-            pred = "rdfs:subPropertyOf"
-            if term_id == "owl:Class":
-                pred = "rdfs:subClassOf"
-            # Select all classes without parents and set them as children of owl:Thing
-            cur.execute(
-                f"""SELECT DISTINCT subject FROM statements 
-                WHERE subject NOT IN 
-                    (SELECT subject FROM statements
-                     WHERE predicate = '{pred}'
-                     AND object IS NOT 'owl:Thing')
-                AND subject IN 
-                    (SELECT subject FROM statements 
-                     WHERE predicate = 'rdf:type'
-                     AND object = '{term_id}' AND subject NOT LIKE '_:%'
-                     AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
-            )
-        children = [row["subject"] for row in cur.fetchall()]
-        hierarchy = {term_id: {"parents": [], "children": children}}
-        curies = {term_id}
-        for c in children:
-            hierarchy[c] = {"parents": [term_id], "children": []}
-            curies.add(c)
+            if term_id == "owl:Individual":
+                tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
+                cur.execute(
+                    f"""SELECT DISTINCT subject FROM statements
+                    WHERE subject NOT IN
+                        (SELECT subject FROM statements
+                         WHERE predicate = 'rdf:type'
+                         AND object NOT IN ('owl:Individual', 'owl:NamedIndividual'))
+                    AND subject IN
+                        (SELECT subject FROM statements
+                         WHERE predicate = 'rdf:type' AND object NOT IN ({tls}))"""
+                )
+            elif term_id == "rdfs:Datatype":
+                cur.execute(
+                    """SELECT DISTINCT subject FROM statements
+                    WHERE predicate = 'rdf:type' AND object = 'rdfs:Datatype'"""
+                )
+            else:
+                pred = "rdfs:subPropertyOf"
+                if term_id == "owl:Class":
+                    pred = "rdfs:subClassOf"
+                # Select all classes without parents and set them as children of owl:Thing
+                cur.execute(
+                    f"""SELECT DISTINCT subject FROM statements 
+                    WHERE subject NOT IN 
+                        (SELECT subject FROM statements
+                         WHERE predicate = '{pred}'
+                         AND object IS NOT 'owl:Thing')
+                    AND subject IN 
+                        (SELECT subject FROM statements 
+                         WHERE predicate = 'rdf:type'
+                         AND object = '{term_id}' AND subject NOT LIKE '_:%'
+                         AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
+                )
+            children = [row["subject"] for row in cur.fetchall()]
+            hierarchy = {term_id: {"parents": [], "children": children}}
+            curies = {term_id}
+            for c in children:
+                hierarchy[c] = {"parents": [term_id], "children": []}
+                curies.add(c)
 
     # Add all of the other compact URIs in the stanza to the set of compact URIs:
     stanza.sort(key=lambda x: x["predicate"])
@@ -906,6 +916,20 @@ def term2rdfa(
         labels[row["subject"]] = row["value"]
     for t, o_label in top_levels.items():
         labels[t] = o_label
+
+    if term_id == "owl:Ontology":
+        dct = "<http://purl.org/dc/terms/title>"
+        for prefix, base in prefixes:
+            if base == "http://purl.org/dc/terms/":
+                dct = f"{prefix}:title"
+        cur.execute(
+            f"""SELECT s1.subject AS iri, s1.value AS title FROM statements s1
+            JOIN statements s2 ON s1.subject = s2.subject
+            WHERE s1.predicate = '{dct}' AND s2.object = 'owl:Ontology'"""
+        )
+        res = cur.fetchone()
+        if res:
+            labels[res["iri"]] = res["title"]
 
     obsolete = []
     cur.execute(
@@ -953,7 +977,7 @@ def term2rdfa(
     if not title:
         title = treename + " Browser"
 
-    if term_id in top_levels:
+    if term_id in top_levels and term_id != "owl:Ontology":
         # Try to get the ontology IRI as si
         si = None
         cur.execute(
@@ -1003,6 +1027,21 @@ def term2rdfa(
             term.append(["div", {"class": "row"}, ["a", {"href": si}, si]])
         term.append(["div", {"class": "row", "style": "padding-top: 10px;"}, rdfa_tree, items])
     else:
+        if term_id == "owl:Ontology":
+            cur.execute("SELECT subject FROM statements WHERE object = 'owl:Ontology'")
+            res = cur.fetchone()
+            if res:
+                term_id = res["subject"]
+                cur.execute(
+                    f"""SELECT * FROM statements
+                    WHERE subject = '{term_id}' AND predicate IS NOT 'rdf:type'"""
+                )
+                stanza = cur.fetchall()
+                subject_label = data["labels"].get(term_id, "Ontology")
+                if term_id.startswith("<"):
+                    si = term_id.lstrip("<").rstrip(">")
+                else:
+                    si = curie2iri(prefixes, term_id)
         items = annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href=href)
         term = [
             "div",
