@@ -264,7 +264,7 @@ def build_tree(
     include_search=False,
 ):
     """Create a hiccup-style HTML vector for the given terms.
-    If there are no terms, create the HTML vector for owl:Thing."""
+    If there are no terms, create the HTML vector for all top-level classes."""
     # Get the prefixes
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
     all_prefixes = [(x["prefix"], x["base"]) for x in cur.fetchall()]
@@ -659,6 +659,7 @@ def dict_factory(cursor, row):
 
 
 def get_entity_type(cur, term_id):
+    """Get the OWL entity type for a term."""
     cur.execute(
         f"SELECT object FROM statements WHERE subject = '{term_id}' AND predicate = 'rdf:type'"
     )
@@ -689,6 +690,7 @@ def get_entity_type(cur, term_id):
 
 
 def get_hierarchy(cur, term_id, entity_type, add_children=None):
+    """Return a hierarchy dictionary for a term and all its ancestors and descendants."""
     # Build the hierarchy
     if entity_type == "owl:Individual":
         cur.execute(
@@ -823,6 +825,7 @@ def term2rdfa(
     add_children=None,
     href="?id={curie}",
 ):
+    """Create a hiccup-style HTML vector for the given term."""
     if term_id not in top_levels:
         # Get a hierarchy under the entity type
         entity_type = get_entity_type(cur, term_id)
@@ -1012,6 +1015,7 @@ def term2rdfa(
 
 
 def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_children=100):
+    """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return ""
 
