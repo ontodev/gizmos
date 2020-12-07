@@ -21,8 +21,6 @@ obi:0000793 a owl:Class ;
                                         owl:unionOf ( obi:0000804 obi:0000842 ) ] ] ;
                         owl:onProperty bfo:0000051 ] ) ] .
 
-bfo:0000001 rdfs:subClassOf owl:Thing .
-
 bfo:0000003 rdfs:subClassOf bfo:0000001 .
 
 bfo:0000015 rdfs:subClassOf bfo:0000003 .

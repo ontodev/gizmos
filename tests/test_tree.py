@@ -13,7 +13,7 @@ def check_term(term, predicates):
     with sqlite3.connect(test_db) as conn:
         conn.row_factory = gizmos.tree.dict_factory
         cur = conn.cursor()
-        html = gizmos.tree.terms2rdfa(cur, "obi", [term], predicate_ids=predicates)
+        html = gizmos.tree.build_tree(cur, "obi", term, predicate_ids=predicates)
 
     # Create the DOM document element
     parser = html5lib.HTMLParser(tree=html5lib.treebuilders.getTreeBuilder("dom"))
@@ -56,5 +56,8 @@ def check_term(term, predicates):
 def test_tree(create_db):
     check_term("OBI:0000666", [])
     check_term("OBI:0000793", [])
-    check_term("OBI:0000793", ["rdfs:label", "IAO:0000115", "rdfs:subClassOf", "owl:equivalentClass", "rdf:type"])
+    check_term(
+        "OBI:0000793",
+        ["rdfs:label", "IAO:0000115", "rdfs:subClassOf", "owl:equivalentClass", "rdf:type"]
+    )
     check_term("OBI:0100046", [])
