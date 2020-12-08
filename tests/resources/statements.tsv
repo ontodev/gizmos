@@ -65,6 +65,7 @@ IAO:0000232	IAO:0000232	IAO:0000115		An administrative note of use for a curator
 IAO:0000232	IAO:0000232	IAO:0000114	IAO:0000122			
 IAO:0000232	IAO:0000232	IAO:0000111		curator note		en
 IAO:0000232	IAO:0000232	rdf:type	owl:AnnotationProperty			
+IAO:0010000	IAO:0010000	rdf:type	owl:AnnotationProperty			
 BFO:0000051	BFO:0000051	rdfs:label		has part		en
 BFO:0000051	BFO:0000051	obo:RO_0001900	obo:RO_0001901			
 BFO:0000051	BFO:0000051	IAO:0000118		has_part		en
