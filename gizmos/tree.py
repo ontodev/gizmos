@@ -146,9 +146,7 @@ def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term
         predicate = row["predicate"]
         obj = row["object"]
         value = row["value"]
-        if predicate == "rdf:type":
-            continue
-        elif predicate == "owl:annotatedSource":
+        if predicate == "owl:annotatedSource":
             details["source"] = obj
         elif predicate == "owl:annotatedProperty":
             details["predicate"] = obj
@@ -899,7 +897,9 @@ def term2rdfa(
         entity_type = term_id
         if term_id == "ontology":
             hierarchy = {term_id: {"parents": [], "children": []}}
-            curies = {ontology_iri}
+            curies = set()
+            if ontology_iri:
+                curies.add(ontology_iri)
         else:
             if term_id == "owl:Individual":
                 tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
@@ -974,7 +974,8 @@ def term2rdfa(
         labels[row["subject"]] = row["value"]
     for t, o_label in top_levels.items():
         labels[t] = o_label
-    labels[ontology_iri] = ontology_title
+    if ontology_iri and ontology_title:
+        labels[ontology_iri] = ontology_title
 
     obsolete = []
     cur.execute(
@@ -1013,16 +1014,19 @@ def term2rdfa(
             label = value
             break
 
-    if term_id == "ontology":
+    subject = None
+    si = None
+    subject_label = None
+    if term_id == "ontology" and ontology_iri:
         cur.execute(
             f"""SELECT * FROM statements
-            WHERE subject = '{ontology_iri}' AND predicate IS NOT 'rdf:type'"""
+            WHERE subject = '{ontology_iri}'"""
         )
         stanza = cur.fetchall()
         subject = ontology_iri
-        subject_label = data["labels"].get(ontology_iri, "Ontology")
+        subject_label = data["labels"].get(ontology_iri, ontology_iri)
         si = curie2iri(prefixes, subject)
-    else:
+    elif term_id != "ontology":
         subject = term_id
         si = curie2iri(prefixes, subject)
         subject_label = label
@@ -1032,21 +1036,10 @@ def term2rdfa(
     if not title:
         title = treename + " Browser"
 
-    if term_id in top_levels and term_id != "ontology":
-        # Try to get the ontology IRI as si
+    if (term_id in top_levels and term_id != "ontology") or (term_id == "ontology" and not ontology_iri):
         si = None
-        cur.execute(
-            """SELECT subject FROM statements
-            WHERE subject NOT LIKE '_:%'
-            AND predicate = 'rdf:type'
-            AND object = 'owl:Ontology';"""
-        )
-        res = cur.fetchone()
-        if res:
-            try:
-                si = curie2iri(prefixes, res["subject"])
-            except ValueError:
-                si = res["subject"]
+        if ontology_iri:
+            si = ontology_iri
         items = [
             "ul",
             {"id": "annotations", "class": "col-md"},
@@ -1074,7 +1067,6 @@ def term2rdfa(
         ]
         term = [
             "div",
-            {"resource": term_id},
             ["div", {"class": "row"}, ["h2", title]],
         ]
         if si:
