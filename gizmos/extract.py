@@ -110,12 +110,12 @@ def extract_terms(database, terms, predicates, fmt="ttl", no_hierarchy=False):
             # Current predicates are IDs or labels - make sure we get all the IDs
             predicate_ids = get_ids(cur, predicates)
 
-        # Create the extract table
+        # Create the terms table containing parent -> child relationships
         cur.execute("CREATE TABLE tmp.terms(parent TEXT NOT NULL, child TEXT)")
         cur.executemany("INSERT INTO tmp.terms VALUES (?, NULL)", [(x,) for x in term_ids])
 
+        # Create tmp predicates table
         cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
-        cur.execute("INSERT INTO tmp.predicates VALUES ('rdf:type')")
         if predicate_ids:
             cur.executemany(
                 "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in predicate_ids]
@@ -123,21 +123,21 @@ def extract_terms(database, terms, predicates, fmt="ttl", no_hierarchy=False):
         else:
             # Insert all predicates
             cur.execute(
-                """
-                    INSERT OR IGNORE INTO tmp.predicates
-                    SELECT DISTINCT predicate
-                    FROM statements"""
+                """INSERT OR IGNORE INTO tmp.predicates
+                SELECT DISTINCT predicate
+                FROM statements WHERE predicate NOT IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
             )
+
         if not no_hierarchy:
+            # Add subclasses & subproperties
             cur.execute(
-                """
-                  WITH RECURSIVE ancestors(parent, child) AS (
+                """WITH RECURSIVE ancestors(parent, child) AS (
                     SELECT * FROM terms
                     UNION
                     SELECT object AS parent, subject AS child
                     FROM statements, ancestors
                     WHERE ancestors.parent = statements.stanza
-                      AND statements.predicate = 'rdfs:subClassOf'
+                      AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
                       AND statements.object NOT LIKE '_:%'
                   )
                   INSERT INTO tmp.terms
@@ -155,29 +155,63 @@ def extract_terms(database, terms, predicates, fmt="ttl", no_hierarchy=False):
                  language TEXT
                )"""
         )
+
+        # Insert rdf:type declarations
         cur.execute(
-            """
-                INSERT INTO tmp.extract (stanza, subject, predicate, object)
-                SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
-                FROM terms WHERE child IS NOT NULL"""
+            """INSERT INTO tmp.extract
+            SELECT * FROM statements
+            WHERE subject IN (SELECT DISTINCT parent FROM terms) AND predicate = 'rdf:type'"""
         )
+
+        # Insert subclass statements:
+        # - parent is a class if it's used in subclass statement
+        # - this allows us to get around undeclared classes, e.g. owl:Thing
         cur.execute(
-            """
-                INSERT INTO tmp.extract
-                SELECT *
-                FROM statements
-                WHERE subject IN (SELECT DISTINCT parent FROM terms)
-                  AND predicate IN (SELECT predicate FROM predicates)
-                  AND value IS NOT NULL"""
+            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
+            SELECT DISTINCT t.child, t.child, 'rdfs:subClassOf', t.parent
+            FROM terms t
+            JOIN statements s ON t.parent = s.object
+            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subClassOf'"""
         )
+
+        # Insert subproperty statements (same as above)
         cur.execute(
-            """
-                INSERT INTO tmp.extract
-                SELECT *
-                FROM statements
-                WHERE subject IN (SELECT DISTINCT parent FROM terms)
-                  AND predicate IN (SELECT predicate FROM predicates)
-                  AND object NOT LIKE '_:%'"""
+            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
+            SELECT DISTINCT t.child, t.child, 'rdfs:subPropertyOf', t.parent
+            FROM terms t
+            JOIN statements s ON t.parent = s.object
+            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subPropertyOf'"""
+        )
+
+        # Insert literal annotations
+        cur.execute(
+            """INSERT INTO tmp.extract
+            SELECT *
+            FROM statements
+            WHERE subject IN (SELECT DISTINCT parent FROM terms)
+              AND predicate IN (SELECT predicate FROM predicates)
+              AND value IS NOT NULL"""
+        )
+
+        # Insert logical relationships (object must be in set of input terms)
+        cur.execute(
+            """INSERT INTO tmp.extract
+            SELECT * FROM statements
+            WHERE subject IN (SELECT DISTINCT parent FROM terms)
+              AND predicate IN (SELECT predicate FROM predicates)
+              AND object IN (SELECT DISTINCT parent FROM terms)"""
+        )
+
+        # Insert IRI annotations (object does not have to be in input terms)
+        cur.execute(
+            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
+            SELECT s1.stanza, s1.subject, s1.predicate, s1.object
+            FROM statements s1
+            JOIN statements s2 ON s1.predicate = s2.subject
+            WHERE s1.subject IN (SELECT DISTINCT parent FROM terms)
+              AND s1.predicate IN (SELECT predicate FROM predicates)
+              AND s2.object = 'owl:AnnotationProperty'
+              AND s1.object NOT NULL"""
         )
 
         # Create esc function
