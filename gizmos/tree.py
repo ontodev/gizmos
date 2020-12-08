@@ -29,7 +29,7 @@ logging.basicConfig(
 OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
 
 top_levels = {
-    "owl:Ontology": "Ontology",
+    "ontology": "Ontology",
     "owl:Class": "Class",
     "owl:AnnotationProperty": "Annotation Property",
     "owl:DataProperty": "Data Property",
@@ -37,6 +37,12 @@ top_levels = {
     "owl:Individual": "Individual",
     "rdfs:Datatype": "Datatype",
 }
+
+# Stylesheets & JS scripts
+bootstrap_css = "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css"
+bootstrap_js = "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+popper_js = "https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+typeahead_js = "https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js"
 
 
 def main():
@@ -376,40 +382,10 @@ def build_tree(
     )
 
     if include_search:
-        # Popper.js
-        body.append(
-            [
-                "script",
-                {
-                    "src": "https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js",
-                    "integrity": "sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo",
-                    "crossorgin": "anonymous",
-                },
-            ]
-        )
-
-        # Bootstrap JS
-        body.append(
-            [
-                "script",
-                {
-                    "src": "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js",
-                    "integrity": "sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6",
-                    "crossorigin": "anonymous",
-                },
-            ]
-        )
-
-        # Typeahead
-        body.append(
-            [
-                "script",
-                {
-                    "type": "text/javascript",
-                    "src": "https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js",
-                },
-            ]
-        )
+        # Add JS imports for running search
+        body.append(["script", {"type": "text/javascript", "src": popper_js}])
+        body.append(["script", {"type": "text/javascript", "src": bootstrap_js}])
+        body.append(["script", {"type": "text/javascript", "src": typeahead_js}])
 
     # Custom JS for show more children
     js = """function show_children() {
@@ -541,7 +517,7 @@ def build_tree(
                 "link",
                 {
                     "rel": "stylesheet",
-                    "href": "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
+                    "href": bootstrap_css,
                     "crossorigin": "anonymous",
                 },
             ],
@@ -880,6 +856,27 @@ def get_sorted_predicates(cur, exclude_ids=None):
     return [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
 
 
+def get_ontology(cur, prefixes):
+    cur.execute(
+        "SELECT subject FROM statements WHERE predicate = 'rdf:type' AND object = 'owl:Ontology'"
+    )
+    res = cur.fetchone()
+    if not res:
+        return None, None
+    iri = res["subject"]
+    dct = "<http://purl.org/dc/terms/title>"
+    for prefix, base in prefixes:
+        if base == "http://purl.org/dc/terms/":
+            dct = f"{prefix}:title"
+    cur.execute(
+        f"SELECT value FROM statements WHERE subject = '{iri}' AND predicate = '{dct}'"
+    )
+    res = cur.fetchone()
+    if not res:
+        return iri, None
+    return iri, res["value"]
+
+
 def term2rdfa(
     cur,
     prefixes,
@@ -892,6 +889,7 @@ def term2rdfa(
     href="?id={curie}",
 ):
     """Create a hiccup-style HTML vector for the given term."""
+    ontology_iri, ontology_title = get_ontology(cur, prefixes)
     if term_id not in top_levels:
         # Get a hierarchy under the entity type
         entity_type = get_entity_type(cur, term_id)
@@ -899,9 +897,9 @@ def term2rdfa(
     else:
         # Get the top-level for this entity type
         entity_type = term_id
-        if term_id == "owl:Ontology":
+        if term_id == "ontology":
             hierarchy = {term_id: {"parents": [], "children": []}}
-            curies = {term_id}
+            curies = {ontology_iri}
         else:
             if term_id == "owl:Individual":
                 tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
@@ -976,20 +974,7 @@ def term2rdfa(
         labels[row["subject"]] = row["value"]
     for t, o_label in top_levels.items():
         labels[t] = o_label
-
-    if term_id == "owl:Ontology":
-        dct = "<http://purl.org/dc/terms/title>"
-        for prefix, base in prefixes:
-            if base == "http://purl.org/dc/terms/":
-                dct = f"{prefix}:title"
-        cur.execute(
-            f"""SELECT s1.subject AS iri, s1.value AS title FROM statements s1
-            JOIN statements s2 ON s1.subject = s2.subject
-            WHERE s1.predicate = '{dct}' AND s2.object = 'owl:Ontology'"""
-        )
-        res = cur.fetchone()
-        if res:
-            labels[res["iri"]] = res["title"]
+    labels[ontology_iri] = ontology_title
 
     obsolete = []
     cur.execute(
@@ -1010,7 +995,7 @@ def term2rdfa(
 
     # Initialise a map with one entry for the tree and one for all of the labels corresponding to
     # all of the compact URIs in the stanza:
-    data = {"labels": labels, "obsolete": obsolete, treename: hierarchy}
+    data = {"labels": labels, "obsolete": obsolete, treename: hierarchy, "iri": ontology_iri}
 
     # Determine the label to use for the given term id when generating RDFa (the term might have
     # multiple labels, in which case we will just choose one and show it everywhere). This defaults
@@ -1028,16 +1013,26 @@ def term2rdfa(
             label = value
             break
 
-    subject = term_id
-    si = curie2iri(prefixes, subject)
-    subject_label = label
+    if term_id == "ontology":
+        cur.execute(
+            f"""SELECT * FROM statements
+            WHERE subject = '{ontology_iri}' AND predicate IS NOT 'rdf:type'"""
+        )
+        stanza = cur.fetchall()
+        subject = ontology_iri
+        subject_label = data["labels"].get(ontology_iri, "Ontology")
+        si = curie2iri(prefixes, subject)
+    else:
+        subject = term_id
+        si = curie2iri(prefixes, subject)
+        subject_label = label
 
     rdfa_tree = term2tree(data, treename, term_id, entity_type, href=href)
 
     if not title:
         title = treename + " Browser"
 
-    if term_id in top_levels and term_id != "owl:Ontology":
+    if term_id in top_levels and term_id != "ontology":
         # Try to get the ontology IRI as si
         si = None
         cur.execute(
@@ -1087,22 +1082,7 @@ def term2rdfa(
             term.append(["div", {"class": "row"}, ["a", {"href": si}, si]])
         term.append(["div", {"class": "row", "style": "padding-top: 10px;"}, rdfa_tree, items])
     else:
-        if term_id == "owl:Ontology":
-            cur.execute("SELECT subject FROM statements WHERE object = 'owl:Ontology'")
-            res = cur.fetchone()
-            if res:
-                term_id = res["subject"]
-                cur.execute(
-                    f"""SELECT * FROM statements
-                    WHERE subject = '{term_id}' AND predicate IS NOT 'rdf:type'"""
-                )
-                stanza = cur.fetchall()
-                subject_label = data["labels"].get(term_id, "Ontology")
-                if term_id.startswith("<"):
-                    si = term_id.lstrip("<").rstrip(">")
-                else:
-                    si = curie2iri(prefixes, term_id)
-        items = annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href=href)
+        items = annotations2rdfa(treename, data, predicate_ids, subject, stanza, href=href)
         term = [
             "div",
             {"resource": subject},
