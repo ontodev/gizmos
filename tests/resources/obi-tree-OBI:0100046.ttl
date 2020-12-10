@@ -35,8 +35,6 @@ obi:0100046 a owl:Class ;
             owl:someValuesFrom obi:0302731 ],
         obi:0302729 .
 
-bfo:0000001 rdfs:subClassOf owl:Thing .
-
 bfo:0000002 rdfs:subClassOf bfo:0000001 .
 
 bfo:0000004 rdfs:subClassOf bfo:0000002 .

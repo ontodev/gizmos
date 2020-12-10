@@ -20,8 +20,6 @@ obi:0000666 a owl:Class ;
                         owl:onProperty obi:0000417 ;
                         owl:someValuesFrom obi:0200173 ] ) ] .
 
-bfo:0000001 rdfs:subClassOf owl:Thing .
-
 bfo:0000003 rdfs:subClassOf bfo:0000001 .
 
 bfo:0000015 rdfs:subClassOf bfo:0000003 .
