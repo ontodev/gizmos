@@ -1264,10 +1264,6 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
             continue
         hierarchies.append(["ul", ["li", o]])
         i += 1
-
-    import json
-
-    print(json.dumps(hierarchies, indent=4))
     return hierarchies
 
 
