@@ -395,15 +395,6 @@ def build_tree(
             console.log("DONE");
         }
         $('#more').hide();
-    }
-    
-    function show_siblings() {
-        document.getElementById('siblings').style.display='none';
-        var x = document.getElementsByClassName('sibling');
-        var i;
-        for (i = 0; i < x.length; i++) {
-            x[i].style.display='block';
-        }
     }"""
 
     # Custom JS for search bar using Typeahead
@@ -520,7 +511,7 @@ def build_tree(
                     "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
                 },
             ],
-            ["link", {"rel": "stylesheet", "href": bootstrap_css, "crossorigin": "anonymous",},],
+            ["link", {"rel": "stylesheet", "href": bootstrap_css, "crossorigin": "anonymous"}],
             ["link", {"rel": "stylesheet", "href": "../style.css"}],
             ["title", title],
             [
@@ -748,16 +739,8 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
         res = cur.fetchall()
     else:
         pred = "rdfs:subPropertyOf"
-        add_query = ""
         if entity_type == "owl:Class":
             pred = "rdfs:subClassOf"
-            add_query = f"""UNION
-                        SELECT '{entity_type}' AS parent, subject AS child
-                        FROM statements
-                        WHERE predicate = '{pred}'
-                          AND object = 'owl:Thing'
-                          AND subject NOT LIKE '_:%'
-                        """
         cur.execute(
             f"""WITH RECURSIVE ancestors(parent, child) AS (
                 VALUES ('{term_id}', NULL)
@@ -767,23 +750,6 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
                 FROM statements
                 WHERE predicate = '{pred}'
                   AND object = '{term_id}'
-                UNION
-                --- The children of the parents of the current term
-                SELECT s2.object AS parent, s2.subject AS child
-                FROM statements s1
-                JOIN statements s2 ON s1.object = s2.object
-                WHERE s1.predicate = '{pred}'
-                  AND s1.subject = '{term_id}'
-                  AND s2.predicate = '{pred}'
-                UNION
-                SELECT '{entity_type}' AS parent, subject AS child
-                FROM statements
-                WHERE subject NOT LIKE '_:%'
-                  AND subject IS NOT 'owl:Thing'
-                  AND subject NOT IN
-                    (SELECT subject FROM statements WHERE predicate = '{pred}')
-                  AND object = '{entity_type}'
-                {add_query}
                 UNION
                 -- The non-blank parents of all of the parent terms extracted so far:
                 SELECT object AS parent, subject AS child
@@ -1117,34 +1083,7 @@ def term2rdfa(
 
 def parent2tree(data, treename, selected_term, selected_children, node, href="?id={curie}"):
     """Return a hiccup-style HTML vector of the full hierarchy for a parent node."""
-    # Sort siblings by labels
-    siblings = data[treename][node]["children"]
-    sib_map = {}
-    for s in siblings:
-        label = data["labels"].get(s, s)
-        sib_map[label] = s
-    sib_keys = sorted(sib_map.keys())
-
-    # Then add them to the hierarchy (hidden)
-    cur_hierarchy = ["ul"]
-    for k in sib_keys:
-        s = sib_map[k]
-        if s == selected_term:
-            selected = ["li", tree_label(data, treename, selected_term)]
-            if len(siblings) > 1:
-                selected.append(
-                    [
-                        "a",
-                        {"id": "siblings", "href": "javascript:show_siblings()"},
-                        "[show siblings]",
-                    ]
-                )
-            selected.append(selected_children)
-            cur_hierarchy.append(selected)
-            continue
-        o = ["a", {"href": href.format(curie=s, db=treename)}, tree_label(data, treename, s)]
-        cur_hierarchy.append(["li", {"class": "sibling", "style": "display: none;"}, o])
-
+    cur_hierarchy = ["ul", ["li", tree_label(data, treename, selected_term), selected_children]]
     if node in top_levels:
         # Parent is top-level, nothing to add
         return cur_hierarchy
@@ -1175,16 +1114,16 @@ def parent2tree(data, treename, selected_term, selected_children, node, href="?i
             ]
             cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
             break
-        o = [
-            "a",
-            {
+        if parent in top_levels:
+            href_ele = {"href": href.format(curie=node, db=treename)}
+        else:
+            href_ele = {
                 "about": parent,
                 "rev": "rdfs:subClassOf",
                 "resource": oc,
                 "href": href.format(curie=node, db=treename),
-            },
-            object_label,
-        ]
+            }
+        o = ["a", href_ele, object_label]
         cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
         node = parent
         if node in top_levels:
