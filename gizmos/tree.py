@@ -1167,10 +1167,7 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
         attrs = {}
         if len(children) > max_children:
             attrs["style"] = "display: none"
-        if attrs:
-            children.append(["li", attrs, o])
-        else:
-            children.append(["li", o])
+        children.append(["li", attrs, o])
         if len(children) == max_children:
             total = len(term_tree["children"])
             attrs = {"href": "javascript:show_children()"}
