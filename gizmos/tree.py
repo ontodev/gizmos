@@ -517,6 +517,22 @@ def build_tree(
             [
                 "style",
                 """
+        .plus {
+          display: inline-block;
+          width: 14px;
+          height: 14px;
+          background:
+            linear-gradient(#C0C0C0,#C0C0C0),
+            linear-gradient(#C0C0C0,#C0C0C0),
+            #fff;
+          background-position: center;
+          background-size: 50% 2px,2px 50%;
+          background-repeat: no-repeat;
+          border-width: 1px;
+          border-style: solid;
+          border-color: #C0C0C0;
+          border-radius: 50%;
+        }
         #annotations {
           padding-left: 1em;
           list-style-type: none !important;
@@ -750,6 +766,13 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
                 FROM statements
                 WHERE predicate = '{pred}'
                   AND object = '{term_id}'
+                UNION
+                --- Children of the children of the given term
+                SELECT object AS parent, subject AS child
+                FROM statements
+                WHERE object IN (SELECT subject FROM statements
+                                 WHERE predicate = '{pred}' AND object = '{term_id}')
+                  AND predicate = '{pred}'
                 UNION
                 -- The non-blank parents of all of the parent terms extracted so far:
                 SELECT object AS parent, subject AS child
@@ -1164,6 +1187,9 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
         oc = child
         object_label = tree_label(data, treename, oc)
         o = ["a", {"rev": predicate, "resource": oc}, object_label]
+        # Check for children of the child and add a plus next to label if so
+        if data[treename][oc]["children"]:
+            o.append(["button", {"class": "plus radius"}])
         attrs = {}
         if len(children) > max_children:
             attrs["style"] = "display: none"
@@ -1207,6 +1233,7 @@ def tree_label(data, treename, s):
     """Retrieve the label of a term."""
     node = data[treename][s]
     label = node.get("label", s)
+    children = node.get("children")
     if s in data["obsolete"]:
         return ["s", label]
     return label
