@@ -918,6 +918,7 @@ def term2rdfa(
             if ontology_iri:
                 curies.add(ontology_iri)
         else:
+            pred = None
             if term_id == "owl:Individual":
                 tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
                 cur.execute(
@@ -953,10 +954,25 @@ def term2rdfa(
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
                 )
             children = [row["subject"] for row in cur.fetchall()]
+            child_children = defaultdict(set)
+            if pred:
+                # Get children of children for classes & properties
+                children_str = ", ".join([f"'{x}'" for x in children])
+                cur.execute(
+                    f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
+                    WHERE predicate = '{pred}' AND object IN ({children_str})"""
+                )
+                for row in cur.fetchall():
+                    p = row["parent"]
+                    if p not in child_children:
+                        child_children[p] = set()
+                    child_children[p].add(row["child"])
             hierarchy = {term_id: {"parents": [], "children": children}}
             curies = {term_id}
             for c in children:
-                hierarchy[c] = {"parents": [term_id], "children": []}
+                c_children = child_children.get(c, set())
+                hierarchy[c] = {"parents": [term_id], "children": list(c_children)}
+                curies.update(c_children)
                 curies.add(c)
 
     # Add all of the other compact URIs in the stanza to the set of compact URIs:
