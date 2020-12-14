@@ -511,14 +511,7 @@ def build_tree(
                     "content": "width=device-width, initial-scale=1, shrink-to-fit=no",
                 },
             ],
-            [
-                "link",
-                {
-                    "rel": "stylesheet",
-                    "href": bootstrap_css,
-                    "crossorigin": "anonymous",
-                },
-            ],
+            ["link", {"rel": "stylesheet", "href": bootstrap_css, "crossorigin": "anonymous"}],
             ["link", {"rel": "stylesheet", "href": "../style.css"}],
             ["title", title],
             [
@@ -705,6 +698,9 @@ def get_entity_type(cur, term_id):
     )
     res = cur.fetchall()
     if len(res) > 1:
+        for r in res:
+            if r["object"] in top_levels:
+                return r["object"]
         return "owl:Individual"
     elif len(res) == 1:
         entity_type = res[0]["object"]
@@ -866,9 +862,7 @@ def get_ontology(cur, prefixes):
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
-    cur.execute(
-        f"SELECT value FROM statements WHERE subject = '{iri}' AND predicate = '{dct}'"
-    )
+    cur.execute(f"SELECT value FROM statements WHERE subject = '{iri}' AND predicate = '{dct}'")
     res = cur.fetchone()
     if not res:
         return iri, None
@@ -1036,7 +1030,9 @@ def term2rdfa(
     if not title:
         title = treename + " Browser"
 
-    if (term_id in top_levels and term_id != "ontology") or (term_id == "ontology" and not ontology_iri):
+    if (term_id in top_levels and term_id != "ontology") or (
+        term_id == "ontology" and not ontology_iri
+    ):
         si = None
         if ontology_iri:
             si = ontology_iri
@@ -1085,6 +1081,56 @@ def term2rdfa(
     return ps, term
 
 
+def parent2tree(data, treename, selected_term, selected_children, node, href="?id={curie}"):
+    """Return a hiccup-style HTML vector of the full hierarchy for a parent node."""
+    cur_hierarchy = ["ul", ["li", tree_label(data, treename, selected_term), selected_children]]
+    if node in top_levels:
+        # Parent is top-level, nothing to add
+        return cur_hierarchy
+
+    # Add parents to the hierarchy
+    i = 0
+    while node and i < 100:
+        i += 1
+        oc = node
+        object_label = tree_label(data, treename, node)
+        parents = data[treename][node]["parents"]
+        if len(parents) == 0:
+            # No parent
+            o = [
+                "a",
+                {"resource": oc, "href": href.format(curie=node, db=treename)},
+                object_label,
+            ]
+            cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
+            break
+        parent = parents[0]
+        if node == parent:
+            # Parent is the same
+            o = [
+                "a",
+                {"resource": oc, "href": href.format(curie=node, db=treename)},
+                object_label,
+            ]
+            cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
+            break
+        if parent in top_levels:
+            href_ele = {"href": href.format(curie=node, db=treename)}
+        else:
+            href_ele = {
+                "about": parent,
+                "rev": "rdfs:subClassOf",
+                "resource": oc,
+                "href": href.format(curie=node, db=treename),
+            }
+        o = ["a", href_ele, object_label]
+        cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
+        node = parent
+        if node in top_levels:
+            break
+    return cur_hierarchy
+
+
 def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_children=100):
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
@@ -1117,8 +1163,6 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
             continue
         oc = child
         object_label = tree_label(data, treename, oc)
-        if child in obsolete:
-            object_label = ["s", object_label]
         o = ["a", {"rev": predicate, "resource": oc}, object_label]
         attrs = {}
         if len(children) > max_children:
@@ -1132,70 +1176,28 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
     if len(children) == 0:
         children = ""
     term_label = tree_label(data, treename, term_id)
-    if term_id in obsolete:
-        term_label = ["s", term_label]
 
     # Get the parents for our target term
-    hierarchy = ["ul", ["li", term_label, children]]
-    i = 0
     parents = term_tree["parents"]
     if parents:
-        node = parents[0]
-        while node and i < 100:
-            i += 1
-            oc = node
-            object_label = tree_label(data, treename, node)
-            if node in obsolete:
-                object_label = ["s", object_label]
-            parents = data[treename][node]["parents"]
-            if len(parents) == 0:
-                # No parent
-                o = [
-                    "a",
-                    {"resource": oc, "href": href.format(curie=node, db=treename)},
-                    object_label,
-                ]
-                hierarchy = ["ul", ["li", o, hierarchy]]
-                break
-            parent = parents[0]
-            if node == parent:
-                # Parent is the same
-                if parent in top_levels:
-                    href_ele = {"href": href.format(curie=node, db=treename)}
-                else:
-                    href_ele = {"resource": oc, "href": href.format(curie=node, db=treename)}
-                o = [
-                    "a",
-                    href_ele,
-                    object_label,
-                ]
-                hierarchy = ["ul", ["li", o, hierarchy]]
-                break
-            if parent in top_levels:
-                href_ele = {"href": href.format(curie=node, db=treename)}
-            else:
-                href_ele = {
-                    "about": parent,
-                    "rev": "rdfs:subClassOf",
-                    "resource": oc,
-                    "href": href.format(curie=node, db=treename),
-                }
-
-            o = [
-                "a",
-                href_ele,
-                object_label,
-            ]
-            hierarchy = ["ul", ["li", o, hierarchy]]
-            node = parent
+        hierarchy = ["ul"]
+        for p in parents:
+            if p.startswith("_:"):
+                continue
+            hierarchy.append(parent2tree(data, treename, term_id, children.copy(), p, href=href))
+    else:
+        hierarchy = ["ul", ["li", term_label, children]]
 
     i = 0
     hierarchies = ["ul", {"id": f"hierarchy", "class": "hierarchy multiple-children col-md"}]
     for t, object_label in top_levels.items():
-        if t == entity_type:
-            hierarchies.append(hierarchy)
-            continue
         o = ["a", {"href": href.format(curie=t, db=treename)}, object_label]
+        if t == entity_type:
+            if term_id == entity_type:
+                hierarchies.append(hierarchy)
+            else:
+                hierarchies.append(["ul", ["li", o, hierarchy]])
+            continue
         hierarchies.append(["ul", ["li", o]])
         i += 1
     return hierarchies
@@ -1204,7 +1206,10 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
 def tree_label(data, treename, s):
     """Retrieve the label of a term."""
     node = data[treename][s]
-    return node.get("label", s)
+    label = node.get("label", s)
+    if s in data["obsolete"]:
+        return ["s", label]
+    return label
 
 
 def row2o(_stanza, _data, _uber_row):
