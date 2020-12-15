@@ -26,9 +26,29 @@ logging.basicConfig(
     level=logging.INFO, format="%(levelname)s - %(asctime)s - %(name)s - %(message)s"
 )
 
-OWL_PREFIX = "http://www.w3.org/2002/07/owl#{}"
+# Plus sign to show a node has children
+PLUS = [
+    "svg",
+    {"width": "14", "height": "14", "fill": "#808080", "viewBox": "0 0 16 16"},
+    [
+        "path",
+        {
+            "fill-rule": "evenodd",
+            "d": "M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z",
+        },
+    ],
+    [
+        "path",
+        {
+            "fill-rule": "evenodd",
+            "d": "M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 "
+            + "0-1h3v-3A.5.5 0 0 1 8 4z",
+        },
+    ],
+]
 
-top_levels = {
+# Top levels to display in tree
+TOP_LEVELS = {
     "ontology": "Ontology",
     "owl:Class": "Class",
     "owl:AnnotationProperty": "Annotation Property",
@@ -699,7 +719,7 @@ def get_entity_type(cur, term_id):
     res = cur.fetchall()
     if len(res) > 1:
         for r in res:
-            if r["object"] in top_levels:
+            if r["object"] in TOP_LEVELS:
                 return r["object"]
         return "owl:Individual"
     elif len(res) == 1:
@@ -750,6 +770,13 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
                 FROM statements
                 WHERE predicate = '{pred}'
                   AND object = '{term_id}'
+                UNION
+                --- Children of the children of the given term
+                SELECT object AS parent, subject AS child
+                FROM statements
+                WHERE object IN (SELECT subject FROM statements
+                                 WHERE predicate = '{pred}' AND object = '{term_id}')
+                  AND predicate = '{pred}'
                 UNION
                 -- The non-blank parents of all of the parent terms extracted so far:
                 SELECT object AS parent, subject AS child
@@ -882,7 +909,7 @@ def term2rdfa(
 ):
     """Create a hiccup-style HTML vector for the given term."""
     ontology_iri, ontology_title = get_ontology(cur, prefixes)
-    if term_id not in top_levels:
+    if term_id not in TOP_LEVELS:
         # Get a hierarchy under the entity type
         entity_type = get_entity_type(cur, term_id)
         hierarchy, curies = get_hierarchy(cur, term_id, entity_type, add_children=add_children)
@@ -895,8 +922,9 @@ def term2rdfa(
             if ontology_iri:
                 curies.add(ontology_iri)
         else:
+            pred = None
             if term_id == "owl:Individual":
-                tls = ", ".join([f"'{x}'" for x in top_levels.keys()])
+                tls = ", ".join([f"'{x}'" for x in TOP_LEVELS.keys()])
                 cur.execute(
                     f"""SELECT DISTINCT subject FROM statements
                     WHERE subject NOT IN
@@ -930,10 +958,25 @@ def term2rdfa(
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
                 )
             children = [row["subject"] for row in cur.fetchall()]
+            child_children = defaultdict(set)
+            if pred:
+                # Get children of children for classes & properties
+                children_str = ", ".join([f"'{x}'" for x in children])
+                cur.execute(
+                    f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
+                    WHERE predicate = '{pred}' AND object IN ({children_str})"""
+                )
+                for row in cur.fetchall():
+                    p = row["parent"]
+                    if p not in child_children:
+                        child_children[p] = set()
+                    child_children[p].add(row["child"])
             hierarchy = {term_id: {"parents": [], "children": children}}
             curies = {term_id}
             for c in children:
-                hierarchy[c] = {"parents": [term_id], "children": []}
+                c_children = child_children.get(c, set())
+                hierarchy[c] = {"parents": [term_id], "children": list(c_children)}
+                curies.update(c_children)
                 curies.add(c)
 
     # Add all of the other compact URIs in the stanza to the set of compact URIs:
@@ -966,7 +1009,7 @@ def term2rdfa(
     )
     for row in cur:
         labels[row["subject"]] = row["value"]
-    for t, o_label in top_levels.items():
+    for t, o_label in TOP_LEVELS.items():
         labels[t] = o_label
     if ontology_iri and ontology_title:
         labels[ontology_iri] = ontology_title
@@ -1030,12 +1073,12 @@ def term2rdfa(
     if not title:
         title = treename + " Browser"
 
-    if (term_id in top_levels and term_id != "ontology") or (
+    if (term_id in TOP_LEVELS and term_id != "ontology") or (
         term_id == "ontology" and not ontology_iri
     ):
         si = None
         if ontology_iri:
-            si = ontology_iri
+            si = curie2iri(prefixes, ontology_iri)
         items = [
             "ul",
             {"id": "annotations", "class": "col-md"},
@@ -1084,7 +1127,7 @@ def term2rdfa(
 def parent2tree(data, treename, selected_term, selected_children, node, href="?id={curie}"):
     """Return a hiccup-style HTML vector of the full hierarchy for a parent node."""
     cur_hierarchy = ["ul", ["li", tree_label(data, treename, selected_term), selected_children]]
-    if node in top_levels:
+    if node in TOP_LEVELS:
         # Parent is top-level, nothing to add
         return cur_hierarchy
 
@@ -1114,7 +1157,7 @@ def parent2tree(data, treename, selected_term, selected_children, node, href="?i
             ]
             cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
             break
-        if parent in top_levels:
+        if parent in TOP_LEVELS:
             href_ele = {"href": href.format(curie=node, db=treename)}
         else:
             href_ele = {
@@ -1126,7 +1169,7 @@ def parent2tree(data, treename, selected_term, selected_children, node, href="?i
         o = ["a", href_ele, object_label]
         cur_hierarchy = ["ul", ["li", o, cur_hierarchy]]
         node = parent
-        if node in top_levels:
+        if node in TOP_LEVELS:
             break
     return cur_hierarchy
 
@@ -1164,14 +1207,19 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
         oc = child
         object_label = tree_label(data, treename, oc)
         o = ["a", {"rev": predicate, "resource": oc}, object_label]
+        # Check for children of the child and add a plus next to label if so
+        if data[treename][oc]["children"]:
+            o.append(PLUS)
         attrs = {}
         if len(children) > max_children:
             attrs["style"] = "display: none"
         children.append(["li", attrs, o])
+
         if len(children) == max_children:
             total = len(term_tree["children"])
             attrs = {"href": "javascript:show_children()"}
             children.append(["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]])
+            break
     children = ["ul", {"id": "children"}] + children
     if len(children) == 0:
         children = ""
@@ -1190,7 +1238,7 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
 
     i = 0
     hierarchies = ["ul", {"id": f"hierarchy", "class": "hierarchy multiple-children col-md"}]
-    for t, object_label in top_levels.items():
+    for t, object_label in TOP_LEVELS.items():
         o = ["a", {"href": href.format(curie=t, db=treename)}, object_label]
         if t == entity_type:
             if term_id == entity_type:
