@@ -537,22 +537,6 @@ def build_tree(
             [
                 "style",
                 """
-        .plus {
-          display: inline-block;
-          width: 14px;
-          height: 14px;
-          background:
-            linear-gradient(#C0C0C0,#C0C0C0),
-            linear-gradient(#C0C0C0,#C0C0C0),
-            #fff;
-          background-position: center;
-          background-size: 50% 2px,2px 50%;
-          background-repeat: no-repeat;
-          border-width: 1px;
-          border-style: solid;
-          border-color: #C0C0C0;
-          border-radius: 50%;
-        }
         #annotations {
           padding-left: 1em;
           list-style-type: none !important;
