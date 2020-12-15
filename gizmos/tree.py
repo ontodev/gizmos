@@ -1255,7 +1255,6 @@ def tree_label(data, treename, s):
     """Retrieve the label of a term."""
     node = data[treename][s]
     label = node.get("label", s)
-    children = node.get("children")
     if s in data["obsolete"]:
         return ["s", label]
     return label
