@@ -484,33 +484,39 @@ OBI:0000666	_:riog00002275	owl:onProperty	OBI:0000299
 OBI:0000666	_:riog00002275	rdf:type	owl:Restriction			
 OBI:0000666	_:riog00002274	rdf:type	owl:Class			
 OBI:0000666	OBI:0000666	rdf:type	owl:Class			
-OBI:0000793	OBI:0000793	rdfs:label		double blind study execution	xsd:string	
-OBI:0000793	OBI:0000793	IAO:0000232		2009/09/28 Alan Ruttenberg. Fucoidan-use-case	xsd:string	
-OBI:0000793	OBI:0000793	IAO:0000119		http://clinicaltrials.gov/ct2/info/glossary#double	xsd:string	
-OBI:0000793	OBI:0000793	IAO:0000117		Person:Alan Ruttenberg	xsd:string	
-OBI:0000793	OBI:0000793	IAO:0000115		A double blind study execution is defined as any study execution in which neither the subjects nor the investigators are informed of which study arm the subjects are part of during the portion of the trial when the subjects are being treated	xsd:string	
-OBI:0000793	OBI:0000793	IAO:0000114	IAO:0000120			
-OBI:0000793	OBI:0000793	IAO:0000111		double blind study execution	xsd:string	
-OBI:0000793	OBI:0000793	rdfs:subClassOf	OBI:0000822			
-OBI:0000793	OBI:0000793	owl:equivalentClass	_:riog00002814			
 OBI:0000793	_:riog00002814	owl:intersectionOf	_:riog00002824			
-OBI:0000793	_:riog00002824	rdf:rest	_:riog00002823			
-OBI:0000793	_:riog00002824	rdf:first	OBI:0000826			
-OBI:0000793	_:riog00002823	rdf:rest	rdf:nil			
-OBI:0000793	_:riog00002823	rdf:first	_:riog00002816			
+OBI:0000793	_:riog00002814	rdf:type	owl:Class			
 OBI:0000793	_:riog00002816	owl:allValuesFrom	_:riog00002817			
-OBI:0000793	_:riog00002817	owl:complementOf	_:riog00002818			
-OBI:0000793	_:riog00002818	owl:unionOf	_:riog00002822			
-OBI:0000793	_:riog00002822	rdf:rest	_:riog00002821			
-OBI:0000793	_:riog00002822	rdf:first	OBI:0000804			
-OBI:0000793	_:riog00002821	rdf:rest	rdf:nil			
-OBI:0000793	_:riog00002821	rdf:first	OBI:0000842			
-OBI:0000793	_:riog00002818	rdf:type	owl:Class			
-OBI:0000793	_:riog00002817	rdf:type	owl:Class			
 OBI:0000793	_:riog00002816	owl:onProperty	BFO:0000051			
 OBI:0000793	_:riog00002816	rdf:type	owl:Restriction			
-OBI:0000793	_:riog00002814	rdf:type	owl:Class			
+OBI:0000793	_:riog00002817	owl:complementOf	_:riog00002818			
+OBI:0000793	_:riog00002817	rdf:type	owl:Class			
+OBI:0000793	_:riog00002818	owl:unionOf	_:riog00002822			
+OBI:0000793	_:riog00002818	rdf:type	owl:Class			
+OBI:0000793	_:riog00002821	rdf:first	OBI:0000842			
+OBI:0000793	_:riog00002821	rdf:rest	rdf:nil			
+OBI:0000793	_:riog00002822	rdf:rest	_:riog00002821			
+OBI:0000793	_:riog00002822	rdf:first	OBI:0000804			
+OBI:0000793	_:riog00002823	rdf:first	_:riog00002816			
+OBI:0000793	_:riog00002823	rdf:rest	_:riog00009990			
+OBI:0000793	_:riog00002824	rdf:rest	_:riog00002823			
+OBI:0000793	_:riog00002824	rdf:first	OBI:0000826			
+OBI:0000793	OBI:0000793	owl:equivalentClass	_:riog00002814			
+OBI:0000793	OBI:0000793	IAO:0000114	IAO:0000120			
+OBI:0000793	OBI:0000793	rdfs:subClassOf	OBI:0000822			
 OBI:0000793	OBI:0000793	rdf:type	owl:Class			
+OBI:0000793	OBI:0000793	IAO:0000111		double blind study execution	xsd:string	
+OBI:0000793	OBI:0000793	IAO:0000115		A double blind study execution is defined as any study execution in which neither the subjects nor the investigators are informed of which study arm the subjects are part of during the portion of the trial when the subjects are being treated	xsd:string	
+OBI:0000793	OBI:0000793	IAO:0000117		Person:Alan Ruttenberg	xsd:string	
+OBI:0000793	OBI:0000793	IAO:0000119		http://clinicaltrials.gov/ct2/info/glossary#double	xsd:string	
+OBI:0000793	OBI:0000793	IAO:0000232		2009/09/28 Alan Ruttenberg. Fucoidan-use-case	xsd:string	
+OBI:0000793	OBI:0000793	rdfs:label		double blind study execution	xsd:string	
+OBI:0000793	_:riog00009990	rdf:rest	_:riog00009991			
+OBI:0000793	_:riog00009990	rdf:first	OBI:0000666			
+OBI:0000793	_:riog00009991	rdf:rest	_:riog00009992			
+OBI:0000793	_:riog00009991	rdf:first	OBI:0000804			
+OBI:0000793	_:riog00009992	rdf:rest	rdf:nil			
+OBI:0000793	_:riog00009992	rdf:first	OBI:0000826			
 OBI:0000804	OBI:0000804	rdfs:label		informing investigator of subject study arm	xsd:string	
 OBI:0000804	OBI:0000804	IAO:0000232		2009/09/28 Alan Ruttenberg. Fucoidan-use-case	xsd:string	
 OBI:0000804	OBI:0000804	IAO:0000117		Person:Alan Ruttenberg	xsd:string	
@@ -754,7 +760,7 @@ IAO:0000120	IAO:0000120	rdf:type	IAO:0000078
 IAO:0000120	IAO:0000120	rdf:type	owl:NamedIndividual			
 IAO:0000120	IAO:0000120	rdf:type	owl:Thing			
 IAO:0000122	IAO:0000122	rdfs:label		ready for release		en
-IAO:0000122	IAO:0000122	IAO:0000115		Class has undergone final review, is ready for use, and will be included in the next release. Any class lacking "ready_for_release" should be considered likely to change place in hierarchy, have its definition refined, or be obsoleted in the next release.  Those classes deemed "ready_for_release" will also derived from a chain of ancestor classes that are also "ready_for_release."		en
+IAO:0000122	IAO:0000122	IAO:0000115		"Class has undergone final review, is ready for use, and will be included in the next release. Any class lacking ""ready_for_release"" should be considered likely to change place in hierarchy, have its definition refined, or be obsoleted in the next release.  Those classes deemed ""ready_for_release"" will also derived from a chain of ancestor classes that are also ""ready_for_release."""		en
 IAO:0000122	IAO:0000122	rdf:type	IAO:0000078			
 IAO:0000122	IAO:0000122	rdf:type	owl:NamedIndividual			
 IAO:0000122	IAO:0000122	rdf:type	owl:Thing			
