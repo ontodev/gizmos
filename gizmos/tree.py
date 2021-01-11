@@ -1329,9 +1329,63 @@ def row2o(_stanza, _data, _uber_row):
 
     def renderNaryRelation(class_pred, operands):
         """Render an n-ary relation using the given predicate and operands"""
-        if len(operands) < 2:
+
+        def relate_ops(oplist, operator):
+            """
+            Relate the logical operands in 'oplist' using the given operator word. E.g., if oplist
+            contains the logical operands: op1, op2, op3, and the operator is 'and', then an 'and'
+            should be rendered in between each of the logical operands.
+            """
+            # There should always be exactly two operands (see comment below):
+            if len(oplist) != 2:
+                LOGGER.error(
+                    "Unexpected number of operands: {} in relate_ops. Got "
+                    "operands: {}".format(len(oplist), oplist)
+                )
+                return []
+
+            # The list that will be returned, with instances of `operator` inserted:
+            related_list = []
+
+            # Get the two operands and their attributes:
+            first_op = oplist[0]
+            first_op_attrs = first_op[1]
+            second_op = oplist[1]
+            second_op_attrs = second_op[1]
+
+            # Append the first operand to the related_list:
+            related_list.append(first_op)
+
+            # Now handle the second operand:
+            if (
+                not second_op_attrs.get("rel") == "rdf:rest"
+                or second_op_attrs.get("resource") == "rdf:nil"
+            ):
+                # If there are no more logical operands, append the last rdf:nil span:
+                related_list.append(second_op)
+            else:
+                # Otherwise, logically connect the remaining ones with `operator` and recurse:
+                related_list += [" ", operator, " "]
+                related_list.append(
+                    [second_op[0], second_op[1]] + relate_ops(second_op[2:], operator)
+                )
+
+            return related_list
+
+        # There should always be exactly two operands, even if, logically, there are more. Either
+        # they'll be literals or they'll be organised into a linked list like the following:
+        # [[rdf:first]
+        #  [rdf:rest [[rdf:first]
+        #             [rdf:rest [rdf:first]
+        #                       [rdf:rest ...
+        #                                         [rdf:first]
+        #                                         [rdf:rest nil]]]...]
+        # In this latter case we need to recurse into the rdf:rest spans to find all of the
+        # operands other than the first.
+        if len(operands) != 2:
             LOGGER.error(
-                f"Something is wrong. Wrong number of operands to '{class_pred}': {operands}"
+                "Wrong number of operands ({}) to renderNaryRelation. Got class predicate: "
+                "{}; operands: {}".format(len(operands), class_pred, operands)
             )
             return ["div"]
 
@@ -1339,17 +1393,12 @@ def row2o(_stanza, _data, _uber_row):
             operator = "and"
         elif class_pred == "owl:unionOf":
             operator = "or"
-        elif class_pred == "owl:oneOf":
-            operator = "one of"
         else:
             LOGGER.error(f"Unrecognized predicate for n-ary relation: {class_pred}")
             return ["div"]
 
         owl_div = ["span", {"rel": class_pred}, " ", "("]
-        for idx, operand in enumerate(operands):
-            owl_div.append(operand)
-            if (idx + 1) < len(operands):
-                owl_div += [" ", operator, " "]
+        owl_div += relate_ops(operands, operator)
         owl_div.append(")")
         return owl_div
 
@@ -1363,6 +1412,8 @@ def row2o(_stanza, _data, _uber_row):
 
         if class_pred == "owl:complementOf":
             operator = "not"
+        elif class_pred == "owl:oneOf":
+            operator = "one of"
         else:
             LOGGER.error(f"Unrecognized predicate for unary relation: {class_pred}")
             return ["div"]
@@ -1461,9 +1512,9 @@ def row2o(_stanza, _data, _uber_row):
             hiccup = hiccup[:1] + [{"rel": rel}] + hiccup[1:]
 
         LOGGER.debug(f"Rendering <s,p,o> = <{class_subj}, {class_pred}, {class_obj}>")
-        if class_pred in ["owl:intersectionOf", "owl:unionOf", "owl:oneOf"]:
+        if class_pred in ["owl:intersectionOf", "owl:unionOf"]:
             hiccup.append(renderNaryRelation(class_pred, operands))
-        elif class_pred == "owl:complementOf":
+        elif class_pred in ["owl:complementOf", "owl:oneOf"]:
             hiccup.append(renderUnaryRelation(class_pred, operands))
         elif class_pred == "owl:onProperty":
             hiccup.append(renderOwlRestriction(given_rows))
