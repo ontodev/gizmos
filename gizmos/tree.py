@@ -714,7 +714,7 @@ def dict_factory(cursor, row):
 def get_entity_type(cur, term_id):
     """Get the OWL entity type for a term."""
     cur.execute(
-        f"SELECT object FROM statements WHERE subject = '{term_id}' AND predicate = 'rdf:type'"
+        f"SELECT object FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}' AND predicate = 'rdf:type'"
     )
     res = cur.fetchall()
     if len(res) > 1:
@@ -729,7 +729,7 @@ def get_entity_type(cur, term_id):
         return entity_type
     else:
         entity_type = None
-        cur.execute(f"SELECT predicate FROM statements WHERE subject = '{term_id}'")
+        cur.execute(f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'")
         preds = [row["predicate"] for row in cur.fetchall()]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
@@ -751,7 +751,8 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
     if entity_type == "owl:Individual":
         cur.execute(
             f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
-                WHERE subject = '{term_id}'
+                WHERE stanza = '{term_id}'
+                 AND subject = '{term_id}'
                  AND predicate = 'rdf:type'
                  AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
                  AND object NOT LIKE '_:%'"""
@@ -889,7 +890,7 @@ def get_ontology(cur, prefixes):
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
-    cur.execute(f"SELECT value FROM statements WHERE subject = '{iri}' AND predicate = '{dct}'")
+    cur.execute(f"SELECT value FROM statements WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'")
     res = cur.fetchone()
     if not res:
         return iri, None
