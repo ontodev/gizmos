@@ -154,60 +154,80 @@ def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term
 
     # Annotations, etc. on the right-hand side for the subjects contained in
     # annotation_bnodes:
-    annotations = {}
+    annotations = defaultdict(dict)
     for row in stanza:
+        # subject is the blank node, _:...
         subject = row["subject"]
         if subject not in annotation_bnodes:
             continue
-        if subject in annotations:
-            details = annotations[subject]
-        else:
-            details = {}
+
+        if subject not in annotations:
+            annotations[subject] = {}
+
         predicate = row["predicate"]
         obj = row["object"]
         value = row["value"]
+
+        if predicate not in [
+            "owl:annotatedSource",
+            "owl:annotatedTarget",
+            "owl:annotatedProperty",
+            "rdf:type",
+        ]:
+            # This is the actual axiom that we care about and contains display value
+            annotations[subject]["predicate"] = predicate
+            if obj:
+                annotations[subject]["object"] = obj
+            if value:
+                annotations[subject]["value"] = value
+            annotations[subject]["annotation"] = row
+
         if predicate == "owl:annotatedSource":
-            details["source"] = obj
+            annotations[subject]["source"] = obj
+
         elif predicate == "owl:annotatedProperty":
-            details["predicate"] = obj
+            annotations[subject]["target_predicate"] = obj
+
         elif predicate == "owl:annotatedTarget":
             if obj:
-                details["target_object"] = obj
+                annotations[subject]["target_object"] = obj
             if value:
-                details["target_value"] = value
-        else:
-            details["annotation"] = row
-        annotations[subject] = details
+                annotations[subject]["target_value"] = value
 
     spv2annotation = {}
     for bnode, details in annotations.items():
         source = details["source"]
-        predicate = details["predicate"]
+        target_predicate = details["target_predicate"]
         target = details.get("target_object", None) or details.get("target_value", None)
-        annotation = details["annotation"]
+
         if source in spv2annotation:
+            # list of predicate -> values on this target (combo of predicate + value)
             pred2val = spv2annotation[source]
         else:
             pred2val = {}
-        if predicate in pred2val:
-            values = pred2val[predicate]
+
+        if target_predicate in pred2val:
+            annotated_values = pred2val[target_predicate]
         else:
-            values = {}
-        if target in values:
-            ax_annotations = values[target]
+            annotated_values = {}
+
+        if target in annotated_values:
+            ax_annotations = annotated_values[target]
         else:
             ax_annotations = {}
 
-        ann_predicate = annotation["predicate"]
+        # predicate of the annotation
+        ann_predicate = details["predicate"]
         if ann_predicate in ax_annotations:
+            # values of the annotation
             anns = ax_annotations[ann_predicate]
         else:
             anns = []
-        anns.append(annotation)
+        anns.append(details["annotation"])
 
         ax_annotations[ann_predicate] = anns
-        values[target] = ax_annotations
-        pred2val[predicate] = values
+        annotated_values[target] = ax_annotations
+        pred2val[target_predicate] = annotated_values
         spv2annotation[source] = pred2val
 
     # The initial hiccup, which will be filled in later:
@@ -729,7 +749,9 @@ def get_entity_type(cur, term_id):
         return entity_type
     else:
         entity_type = None
-        cur.execute(f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'")
+        cur.execute(
+            f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'"
+        )
         preds = [row["predicate"] for row in cur.fetchall()]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
@@ -890,7 +912,9 @@ def get_ontology(cur, prefixes):
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
-    cur.execute(f"SELECT value FROM statements WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'")
+    cur.execute(
+        f"SELECT value FROM statements WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'"
+    )
     res = cur.fetchone()
     if not res:
         return iri, None
