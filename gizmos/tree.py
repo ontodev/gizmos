@@ -174,6 +174,7 @@ def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term
             "owl:annotatedProperty",
             "rdf:type",
         ]:
+            # This is the actual axiom that we care about and contains display value
             annotations[subject]["predicate"] = predicate
             if obj:
                 annotations[subject]["object"] = obj
