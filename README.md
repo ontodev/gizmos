@@ -22,7 +22,7 @@ The `export` module creates a table (default TSV) output containing the terms an
 python3 -m gizmos.export -d [path-to-database] -t [term] > [output-tsv]
 ```
 
-The `term` should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line.
+The `term` should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line. If a term or terms are not included, *all* terms in the database will be returned.
 
 You can specify a format other than TSV by using the `-f <format>`/`--format <format>` option. The following formats are supported:
 * TSV
