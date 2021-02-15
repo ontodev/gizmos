@@ -55,7 +55,12 @@ def main():
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
-    p.add_argument("-c", "--contents-only", action="store_true", help="If provided with HTML format, render HTML without roots")
+    p.add_argument(
+        "-c",
+        "--contents-only",
+        action="store_true",
+        help="If provided with HTML format, render HTML without roots",
+    )
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
     p.add_argument(
         "-n",
@@ -70,12 +75,15 @@ def main():
 def export(args):
     """Wrapper for export_terms."""
     terms = get_terms(args.term, args.terms)
-    if not terms:
-        logging.critical("One or more term(s) must be specified with --term or --terms")
-        sys.exit(1)
     predicates = get_terms(args.predicate, args.predicates)
     return export_terms(
-        args.database, terms, predicates, args.format, standalone=not args.contents_only, split=args.split, no_headers=args.no_headers
+        args.database,
+        terms,
+        predicates,
+        args.format,
+        standalone=not args.contents_only,
+        split=args.split,
+        no_headers=args.no_headers,
     )
 
 
@@ -248,7 +256,7 @@ def get_values(cur, term, predicate_ids):
 
 def render_html(prefixes, value_formats, predicate_ids, details, standalone=True, no_headers=False):
     """Render an HTML table."""
-    predicate_labels = {v: k for k,v in predicate_ids.items()}
+    predicate_labels = {v: k for k, v in predicate_ids.items()}
     # Create the prefix element
     pref_strs = []
     for prefix, base in prefixes.items():
@@ -332,7 +340,14 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
 
 
 def render_output(
-    prefixes, value_formats, predicate_ids, details, fmt, split="|", standalone=True, no_headers=False
+    prefixes,
+    value_formats,
+    predicate_ids,
+    details,
+    fmt,
+    split="|",
+    standalone=True,
+    no_headers=False,
 ):
     """Render the string output based on the format."""
     if fmt == "tsv":
@@ -340,7 +355,14 @@ def render_output(
     elif fmt == "csv":
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
-        return render_html(prefixes, value_formats, predicate_ids, details, standalone=standalone, no_headers=no_headers)
+        return render_html(
+            prefixes,
+            value_formats,
+            predicate_ids,
+            details,
+            standalone=standalone,
+            no_headers=no_headers,
+        )
     else:
         raise Exception("Invalid format: " + fmt)
 
@@ -385,7 +407,14 @@ def render_table(value_formats, details, separator, split="|", no_headers=False)
 
 
 def export_terms(
-    database, terms, predicates, fmt, split="|", standalone=True, default_value_format="IRI", no_headers=False
+    database,
+    terms,
+    predicates,
+    fmt,
+    split="|",
+    standalone=True,
+    default_value_format="IRI",
+    no_headers=False,
 ):
     """Retrieve details for given terms and render in the given format."""
 
@@ -408,7 +437,13 @@ def export_terms(
         cur.execute("ATTACH DATABASE '' AS tmp")
         add_labels(cur)
 
-        term_ids = get_ids(cur, terms)
+        if terms:
+            term_ids = get_ids(cur, terms)
+        else:
+            term_ids = []
+            cur.execute("SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%'")
+            for row in cur.fetchall():
+                term_ids.append(row["stanza"])
 
         if not predicates:
             # Get all predicates if not provided
@@ -446,7 +481,14 @@ def export_terms(
             details[term] = term_details
 
     return render_output(
-        prefixes, value_formats, predicate_ids, details, fmt, split=split, standalone=standalone, no_headers=no_headers
+        prefixes,
+        value_formats,
+        predicate_ids,
+        details,
+        fmt,
+        split=split,
+        standalone=standalone,
+        no_headers=no_headers,
     )
 
 
