@@ -183,6 +183,7 @@ def get_logical_objects(cur, prefixes, term, predicate_ids):
     logical_objects = defaultdict(list)
 
     # TODO - support cardinality (if onClass, should have count)
+    # TODO - support queries on individuals, properties
     q = f"""SELECT DISTINCT s1.object AS pred, s2.object AS obj
         FROM statements s1 JOIN statements s2 ON s1.subject = s2.subject
         WHERE s1.stanza = "{term}"
