@@ -55,7 +55,12 @@ def main():
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
-    p.add_argument("-c", "--contents-only", action="store_true", help="If provided with HTML format, render HTML without roots")
+    p.add_argument(
+        "-c",
+        "--contents-only",
+        action="store_true",
+        help="If provided with HTML format, render HTML without roots",
+    )
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
     p.add_argument(
         "-n",
@@ -75,8 +80,67 @@ def export(args):
         sys.exit(1)
     predicates = get_terms(args.predicate, args.predicates)
     return export_terms(
-        args.database, terms, predicates, args.format, standalone=not args.contents_only, split=args.split, no_headers=args.no_headers
+        args.database,
+        terms,
+        predicates,
+        args.format,
+        standalone=not args.contents_only,
+        split=args.split,
+        no_headers=args.no_headers,
     )
+
+
+def get_annotation_objects(cur, prefixes, term, predicate_ids):
+    """Get a dict of predicate label -> objects. The object will either be the term ID or label,
+    when the label exists."""
+    predicates_str = ", ".join(
+        [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
+    )
+    term_objects = defaultdict(list)
+    cur.execute(
+        f"""SELECT DISTINCT predicate, s.object AS object, l.label AS object_label
+            FROM statements s JOIN labels l ON s.object = l.term
+            WHERE s.subject = '{term}' AND s.predicate IN ({predicates_str})"""
+    )
+    for row in cur.fetchall():
+        p = row["predicate"]
+        p_label = predicate_ids[p]
+        if p_label not in term_objects:
+            term_objects[p_label] = list()
+
+        obj = row["object"]
+        if obj.startswith("_:"):
+            # TODO - handle blank nodes
+            continue
+        obj_label = row["object_label"]
+
+        d = {"id": obj, "iri": get_iri(prefixes, term)}
+        # Maybe add the label
+        if obj != obj_label:
+            d["label"] = obj_label
+        term_objects[p_label].append(d)
+    return term_objects
+
+
+def get_annotation_values(cur, term, predicate_ids):
+    """Get a dict of predicate label -> literal values."""
+    predicates_str = ", ".join(
+        [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
+    )
+    term_values = defaultdict(list)
+    cur.execute(
+        f"""SELECT DISTINCT predicate, value FROM statements s
+            WHERE subject = '{term}' AND predicate IN ({predicates_str}) AND value IS NOT NULL"""
+    )
+    for row in cur.fetchall():
+        p = row["predicate"]
+        p_label = predicate_ids[p]
+        value = row["value"]
+        if value:
+            if p_label not in term_values:
+                term_values[p_label] = list()
+            term_values[p_label].append({"value": value})
+    return term_values
 
 
 def get_html_value(value_format, predicate_id, vo):
@@ -112,36 +176,32 @@ def get_iri(prefixes, term):
     return namespace + local_id
 
 
-def get_objects(cur, prefixes, term, predicate_ids):
-    """Get a dict of predicate label -> objects. The object will either be the term ID or label,
-    when the label exists."""
+def get_logical_objects(cur, prefixes, term, predicate_ids):
     predicates_str = ", ".join(
         [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
     )
-    term_objects = defaultdict(list)
-    cur.execute(
-        f"""SELECT DISTINCT predicate, s.object AS object, l.label AS object_label
-            FROM statements s JOIN labels l ON s.object = l.term
-            WHERE s.subject = '{term}' AND s.predicate IN ({predicates_str})"""
-    )
+    logical_objects = defaultdict(list)
+
+    # TODO - support cardinality (if onClass, should have count)
+    q = f"""SELECT DISTINCT s1.object AS pred, s2.object AS obj
+        FROM statements s1 JOIN statements s2 ON s1.subject = s2.subject
+        WHERE s1.stanza = "{term}"
+        AND s1.predicate = "owl:onProperty"
+        AND s1.object IN ({predicates_str})
+        AND s2.predicate IN ("owl:someValuesFrom", "owl:allValuesFrom", "owl:onClass");"""
+    cur.execute(q)
+
     for row in cur.fetchall():
-        p = row["predicate"]
+        p = row["pred"]
         p_label = predicate_ids[p]
-        if p_label not in term_objects:
-            term_objects[p_label] = list()
+        obj = row["obj"]
+        if obj:
+            if p_label not in logical_objects:
+                logical_objects[p_label] = list()
+            d = {"id": obj, "iri": get_iri(prefixes, obj)}
+            logical_objects[p_label].append(d)
 
-        obj = row["object"]
-        if obj.startswith("_:"):
-            # TODO - handle blank nodes
-            continue
-        obj_label = row["object_label"]
-
-        d = {"id": obj, "iri": get_iri(prefixes, term)}
-        # Maybe add the label
-        if obj != obj_label:
-            d["label"] = obj_label
-        term_objects[p_label].append(d)
-    return term_objects
+    return logical_objects
 
 
 def get_predicate_ids(cur, id_or_labels=None):
@@ -153,20 +213,33 @@ def get_predicate_ids(cur, id_or_labels=None):
             if m:
                 id_or_label = m.group(1)
             if id_or_label in ["CURIE", "IRI", "label"]:
-                predicate_ids[id_or_label] = id_or_label
+                predicate_ids[id_or_label] = {"label": id_or_label, "type": None}
                 continue
             cur.execute(f"SELECT term FROM labels WHERE label = '{id_or_label}'")
             res = cur.fetchone()
             if res:
-                predicate_ids[res["term"]] = id_or_label
+                curie = res["term"]
             else:
                 # Make sure this exists as an ID
                 cur.execute(f"SELECT label FROM labels WHERE term = '{id_or_label}'")
                 res = cur.fetchone()
                 if res:
-                    predicate_ids[id_or_label] = id_or_label
+                    curie = id_or_label
                 else:
                     logging.warning(f"'{id_or_label}' does not exist in database")
+                    continue
+
+            # Get the entity type so we know how to query it
+            cur.execute(
+                """SELECT object FROM statements WHERE subject = ? AND predicate = "rdf:type";""",
+                (curie,),
+            )
+            res = cur.fetchone()
+            if res:
+                owl_type = res["object"]
+            else:
+                owl_type = None
+            predicate_ids[curie] = {"label": id_or_label, "type": owl_type}
         return predicate_ids
 
     cur.execute(
@@ -211,9 +284,23 @@ def get_term_details(cur, prefixes, term, predicate_ids):
     if "label" in predicate_ids:
         term_details["label"] = base_dict
 
+    annotation_predicates = {}
+    op_predicates = {}
+    dt_predicates = {}
+
+    for predicate_id, details in predicate_ids.items():
+        if not details.get("type") or details["type"] == "owl:AnnotationProperty":
+            annotation_predicates[predicate_id] = details["label"]
+        elif details["type"] == "owl:ObjectProperty":
+            op_predicates[predicate_id] = details["label"]
+        else:
+            dt_predicates[predicate_id] = details["label"]
+
     # Get all details
-    term_details.update(get_values(cur, term, predicate_ids))
-    term_details.update(get_objects(cur, prefixes, term, predicate_ids))
+    term_details.update(get_annotation_values(cur, term, annotation_predicates))
+    term_details.update(get_annotation_objects(cur, prefixes, term, annotation_predicates))
+    term_details.update(get_logical_objects(cur, prefixes, term, op_predicates))
+    # TODO - data property values?
 
     # Format predicates with multiple values - a single value should not be an array
     term_details_fixed = {}
@@ -225,30 +312,9 @@ def get_term_details(cur, prefixes, term, predicate_ids):
     return term_details_fixed
 
 
-def get_values(cur, term, predicate_ids):
-    """Get a dict of predicate label -> literal values."""
-    predicates_str = ", ".join(
-        [f"'{x}'" for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
-    )
-    term_values = defaultdict(list)
-    cur.execute(
-        f"""SELECT DISTINCT predicate, value FROM statements s
-            WHERE subject = '{term}' AND predicate IN ({predicates_str}) AND value IS NOT NULL"""
-    )
-    for row in cur.fetchall():
-        p = row["predicate"]
-        p_label = predicate_ids[p]
-        value = row["value"]
-        if value:
-            if p_label not in term_values:
-                term_values[p_label] = list()
-            term_values[p_label].append({"value": value})
-    return term_values
-
-
 def render_html(prefixes, value_formats, predicate_ids, details, standalone=True, no_headers=False):
     """Render an HTML table."""
-    predicate_labels = {v: k for k,v in predicate_ids.items()}
+    predicate_labels = {v: k for k, v in predicate_ids.items()}
     # Create the prefix element
     pref_strs = []
     for prefix, base in prefixes.items():
@@ -332,7 +398,14 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
 
 
 def render_output(
-    prefixes, value_formats, predicate_ids, details, fmt, split="|", standalone=True, no_headers=False
+    prefixes,
+    value_formats,
+    predicate_ids,
+    details,
+    fmt,
+    split="|",
+    standalone=True,
+    no_headers=False,
 ):
     """Render the string output based on the format."""
     if fmt == "tsv":
@@ -340,7 +413,14 @@ def render_output(
     elif fmt == "csv":
         return render_table(value_formats, details, ",", split=split, no_headers=no_headers)
     elif fmt == "html":
-        return render_html(prefixes, value_formats, predicate_ids, details, standalone=standalone, no_headers=no_headers)
+        return render_html(
+            prefixes,
+            value_formats,
+            predicate_ids,
+            details,
+            standalone=standalone,
+            no_headers=no_headers,
+        )
     else:
         raise Exception("Invalid format: " + fmt)
 
@@ -385,10 +465,16 @@ def render_table(value_formats, details, separator, split="|", no_headers=False)
 
 
 def export_terms(
-    database, terms, predicates, fmt, split="|", standalone=True, default_value_format="IRI", no_headers=False
+    database,
+    terms,
+    predicates,
+    fmt,
+    split="|",
+    standalone=True,
+    default_value_format="IRI",
+    no_headers=False,
 ):
     """Retrieve details for given terms and render in the given format."""
-
     # Validate default format
     if default_value_format not in ["CURIE", "IRI", "label"]:
         raise Exception(
@@ -412,7 +498,7 @@ def export_terms(
 
         if not predicates:
             # Get all predicates if not provided
-            predicate_ids = {default_value_format: default_value_format}
+            predicate_ids = {default_value_format: {"label": default_value_format, "type": None}}
             value_formats = {default_value_format: default_value_format.lower()}
             predicate_ids.update(get_predicate_ids(cur))
             predicate_id_str = ", ".join([f"'{x}'" for x in predicate_ids.keys()])
@@ -446,7 +532,14 @@ def export_terms(
             details[term] = term_details
 
     return render_output(
-        prefixes, value_formats, predicate_ids, details, fmt, split=split, standalone=standalone, no_headers=no_headers
+        prefixes,
+        value_formats,
+        predicate_ids,
+        details,
+        fmt,
+        split=split,
+        standalone=standalone,
+        no_headers=no_headers,
     )
 
 
