@@ -244,11 +244,21 @@ def get_predicate_ids(cur, id_or_labels=None):
         return predicate_ids
 
     cur.execute(
-        """SELECT DISTINCT s.predicate AS term, l.label AS label
-           FROM statements s JOIN labels l ON s.predicate = l.term"""
+        """SELECT DISTINCT s1.predicate AS term, l.label AS label
+           FROM statements s1
+           JOIN statements s2 ON s1.predicate = s2.subject
+           JOIN labels l ON s1.predicate = l.term"""
     )
     for row in cur.fetchall():
-        predicate_ids[row["term"]] = row["label"]
+        curie = row["term"]
+        cur.execute(
+            "SELECT object FROM statements WHERE subject = ? AND predicate = 'rdf:type'", (curie,)
+        )
+        res = cur.fetchone()
+        owl_type = None
+        if res:
+            owl_type = res["object"]
+        predicate_ids[curie] = {"label": row["label"], "type": owl_type}
     if "rdf:type" in predicate_ids:
         del predicate_ids["rdf:type"]
     return predicate_ids
