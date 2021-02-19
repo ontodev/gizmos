@@ -325,7 +325,7 @@ def get_term_details(cur, prefixes, term, predicate_ids):
 
 def render_html(prefixes, value_formats, predicate_ids, details, standalone=True, no_headers=False):
     """Render an HTML table."""
-    predicate_labels = {v: k for k, v in predicate_ids.items()}
+    predicate_labels = {v["label"]: k for k, v in predicate_ids.items()}
     # Create the prefix element
     pref_strs = []
     for prefix, base in prefixes.items():
@@ -358,7 +358,10 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
             else:
                 pred_label = h
 
-            predicate_id = predicate_labels[pred_label]
+            predicate_id = predicate_labels.get(pred_label)
+            if not predicate_id:
+                tr.append(["td"])
+                continue
             value_format = value_formats[h]
             vo_list = detail.get(pred_label)
             if not vo_list:
