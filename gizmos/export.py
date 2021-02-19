@@ -244,10 +244,9 @@ def get_predicate_ids(cur, id_or_labels=None):
         return predicate_ids
 
     cur.execute(
-        """SELECT DISTINCT s1.predicate AS term, l.label AS label
-           FROM statements s1
-           JOIN statements s2 ON s1.predicate = s2.subject
-           JOIN labels l ON s1.predicate = l.term"""
+        """SELECT DISTINCT s.predicate AS term, l.label AS label
+           FROM statements s
+           JOIN labels l ON s.predicate = l.term"""
     )
     for row in cur.fetchall():
         curie = row["term"]
