@@ -19,10 +19,22 @@ Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to cr
 
 The `export` module creates a table (default TSV) output containing the terms and their predicates written to stdout.
 ```
-python3 -m gizmos.export -d [path-to-database] -t [term] > [output-tsv]
+python3 -m gizmos.export -d [path-to-database] > [output-tsv]
 ```
 
-The `term` should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can also be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line. If a term or terms are not included, *all* terms in the database will be returned.
+#### Terms
+
+If you know the term or set of terms you wish to include in the export, you can use the `--term`/`--terms` options. The `term` (`-t` or `--term`) should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line.
+
+If a term or terms are not included, *all* terms in the database will be returned. The set of all terms returned can be filtered using the `-F`/`--filter` option (note that this option will not do anything when you are using `--term` or `--terms`). The argument to filter should be a SQL-like statement to append after the `WHERE` clause, excluding the `WHERE`. For example:
+
+```
+python3 -m gizmos.export -d ont.db -F "subject LIKE 'EX:%'" > out.tsv
+```
+
+For information on the structure of the `statements` table, please see [RDFTab](https://github.com/ontodev/rdftab.rs).
+
+#### Output Formats
 
 You can specify a format other than TSV by using the `-f <format>`/`--format <format>` option. The following formats are supported:
 * TSV
@@ -30,6 +42,8 @@ You can specify a format other than TSV by using the `-f <format>`/`--format <fo
 * HTML \*
 
 \* This is full HTML page. If you just want the content without `<html>` and `<body>` tags, include `-c`/`--content-only`.
+
+#### Headers and Values
 
 By default, headers are included. The headers are the predicate labels. If you wish to not include headers, include `-n`/`--no-headers`.
 

@@ -54,6 +54,7 @@ def main():
         "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
+    p.add_argument("-F", "--filter", help="SQL WHERE statement to filter terms")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
     p.add_argument(
         "-c",
@@ -81,6 +82,7 @@ def export(args):
         terms,
         predicates,
         args.format,
+        query_filter=args.filter,
         standalone=not args.contents_only,
         split=args.split,
         no_headers=args.no_headers,
@@ -411,6 +413,7 @@ def export_terms(
     terms,
     predicates,
     fmt,
+    query_filter=None,
     split="|",
     standalone=True,
     default_value_format="IRI",
@@ -441,7 +444,13 @@ def export_terms(
             term_ids = get_ids(cur, terms)
         else:
             term_ids = []
-            cur.execute("SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%'")
+            if query_filter:
+                # Use provided query filter to select terms
+                query = "SELECT DISTINCT stanza FROM statements WHERE " + query_filter
+            else:
+                # Get all, excluding blank nodes
+                query = "SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%'"
+            cur.execute(query)
             for row in cur.fetchall():
                 term_ids.append(row["stanza"])
 
