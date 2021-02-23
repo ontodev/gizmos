@@ -62,6 +62,7 @@ def main():
         help="If provided with HTML format, render HTML without roots",
     )
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
+    p.add_argument("-w", "--where", help="SQL WHERE statement to include when selecting terms")
     p.add_argument(
         "-n",
         "--no-headers",
@@ -75,18 +76,17 @@ def main():
 def export(args):
     """Wrapper for export_terms."""
     terms = get_terms(args.term, args.terms)
-    if not terms:
-        logging.critical("One or more term(s) must be specified with --term or --terms")
-        sys.exit(1)
     predicates = get_terms(args.predicate, args.predicates)
     return export_terms(
         args.database,
         terms,
         predicates,
         args.format,
+        default_value_format=args.values,
         standalone=not args.contents_only,
         split=args.split,
         no_headers=args.no_headers,
+        where=args.where,
     )
 
 
@@ -486,6 +486,7 @@ def export_terms(
     standalone=True,
     default_value_format="IRI",
     no_headers=False,
+    where=None,
 ):
     """Retrieve details for given terms and render in the given format."""
     # Validate default format
@@ -507,7 +508,19 @@ def export_terms(
         cur.execute("ATTACH DATABASE '' AS tmp")
         add_labels(cur)
 
-        term_ids = get_ids(cur, terms)
+        if terms:
+            term_ids = get_ids(cur, terms)
+        else:
+            term_ids = []
+            if where:
+                # Use provided query filter to select terms
+                query = "SELECT DISTINCT stanza FROM statements WHERE " + where
+            else:
+                # Get all, excluding blank nodes
+                query = "SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%'"
+            cur.execute(query)
+            for row in cur.fetchall():
+                term_ids.append(row["stanza"])
 
         if not predicates:
             # Get all predicates if not provided
