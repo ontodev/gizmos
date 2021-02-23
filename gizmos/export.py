@@ -54,7 +54,6 @@ def main():
         "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
     p.add_argument("-f", "--format", help="Output format (tsv, csv, html)", default="tsv")
-    p.add_argument("-F", "--filter", help="SQL WHERE statement to filter terms")
     p.add_argument("-s", "--split", help="Character to split multiple values on", default="|")
     p.add_argument(
         "-c",
@@ -63,6 +62,7 @@ def main():
         help="If provided with HTML format, render HTML without roots",
     )
     p.add_argument("-V", "--values", help="Default value format for cell values", default="IRI")
+    p.add_argument("-w", "--where", help="SQL WHERE statement to include when selecting terms")
     p.add_argument(
         "-n",
         "--no-headers",
@@ -82,10 +82,10 @@ def export(args):
         terms,
         predicates,
         args.format,
-        query_filter=args.filter,
         standalone=not args.contents_only,
         split=args.split,
         no_headers=args.no_headers,
+        where=args.where,
     )
 
 
@@ -413,11 +413,11 @@ def export_terms(
     terms,
     predicates,
     fmt,
-    query_filter=None,
     split="|",
     standalone=True,
     default_value_format="IRI",
     no_headers=False,
+    where=None,
 ):
     """Retrieve details for given terms and render in the given format."""
 
@@ -444,9 +444,9 @@ def export_terms(
             term_ids = get_ids(cur, terms)
         else:
             term_ids = []
-            if query_filter:
+            if where:
                 # Use provided query filter to select terms
-                query = "SELECT DISTINCT stanza FROM statements WHERE " + query_filter
+                query = "SELECT DISTINCT stanza FROM statements WHERE " + where
             else:
                 # Get all, excluding blank nodes
                 query = "SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%'"

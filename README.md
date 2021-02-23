@@ -26,10 +26,10 @@ python3 -m gizmos.export -d [path-to-database] > [output-tsv]
 
 If you know the term or set of terms you wish to include in the export, you can use the `--term`/`--terms` options. The `term` (`-t` or `--term`) should be the CURIE or label of your desired term, and you can include more than one `-t` option. Mulitple terms can be specified with `-T <file>`/`--terms <file>` with each CURIE or label on one line.
 
-If a term or terms are not included, *all* terms in the database will be returned. The set of all terms returned can be filtered using the `-F`/`--filter` option (note that this option will not do anything when you are using `--term` or `--terms`). The argument to filter should be a SQL-like statement to append after the `WHERE` clause, excluding the `WHERE`. For example:
+If a term or terms are not included, *all* terms in the database will be returned. The set of all terms returned can be narrowed using the `-w`/`--where` option (note that this option will not do anything when you are using `--term` or `--terms`). The argument to `--where` should be a SQL-like statement to append after the `WHERE` clause, excluding the `WHERE`. For example:
 
 ```
-python3 -m gizmos.export -d ont.db -F "subject LIKE 'EX:%'" > out.tsv
+python3 -m gizmos.export -d ont.db -w "subject LIKE 'EX:%'" > out.tsv
 ```
 
 For information on the structure of the `statements` table, please see [RDFTab](https://github.com/ontodev/rdftab.rs).
