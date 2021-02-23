@@ -82,6 +82,7 @@ def export(args):
         terms,
         predicates,
         args.format,
+        default_value_format=args.values,
         standalone=not args.contents_only,
         split=args.split,
         no_headers=args.no_headers,
