@@ -805,7 +805,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
                 SELECT object AS parent, subject AS child
                 FROM statements, ancestors
                 WHERE ancestors.parent = statements.stanza
-                  AND statements.predicate = 'rdfs:subClassOf'
+                  AND statements.predicate = '{pred}'
                   AND statements.object NOT LIKE '_:%'
               )
               SELECT * FROM ancestors"""
@@ -873,23 +873,16 @@ def get_sorted_predicates(cur, exclude_ids=None):
     # Retrieve all predicate IDs
     cur.execute("SELECT DISTINCT predicate FROM statements")
     all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
+    if exclude:
+        all_predicate_ids = [x for x in all_predicate_ids if x not in exclude_ids]
 
     # Retrieve predicates with labels
-    if exclude:
-        cur.execute(
-            f"""
-            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
-            JOIN statements s2 ON s1.predicate = s2.subject
-            WHERE s1.predicate NOT IN ({exclude}) AND s2.predicate = 'rdfs:label'"""
-        )
-    else:
-        cur.execute(
-            """
-            SELECT DISTINCT s1.predicate AS s, s2.value AS label FROM statements s1
-            JOIN statements s2 ON s1.predicate = s2.subject
-            WHERE s2.predicate = 'rdfs:label'"""
-        )
-    predicate_label_map = {x["s"]: x["label"] for x in cur.fetchall()}
+    ap_str = ", ".join([f"'{x}'" for x in all_predicate_ids])
+    cur.execute(
+        f"""SELECT DISTINCT subject, value
+        FROM statements WHERE subject IN ({ap_str}) AND predicate = 'rdfs:label';"""
+    )
+    predicate_label_map = {x["subject"]: x["value"] for x in cur.fetchall()}
 
     # Add unlabeled predicates to map with label = ID
     for p in all_predicate_ids:
