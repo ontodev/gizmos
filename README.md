@@ -15,6 +15,20 @@ There are some dependencies that are test-only (e.g., will not be listed in the 
 
 Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
 
+### `gizmos.check`
+
+The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `gizmos.check` before using the other commands.
+```
+python3 -m gizmos.check [path-to-database]
+```
+
+This command will check that both the `prefix` and `statements` tables exist with valid columns as defined by [rdftab](https://github.com/ontodev/rdftab.rs). If those tables are valid, it checks the contents of `statements` to make sure that:
+* all CURIEs use valid prefixes
+* `stanza` is never a blank node
+* `stanza`, `subject`, and `predicate` are never `NULL`
+
+All errors are logged, and if errors are found, the command will exit with status code `1`.
+
 ### `gizmos.export`
 
 The `export` module creates a table (default TSV) output containing the terms and their predicates written to stdout.
