@@ -86,7 +86,7 @@ python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
 
 Usage in Python (with defaults for optional parameters):
 ```
-json = gizmos.search(
+json = gizmos.search(    # returns: JSON string
     database,            # string: path to database
     search_text,         # string: text to search
     label="rdfs:label",  # string: term ID for label
@@ -127,7 +127,7 @@ python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 
 Usage in Python (with defaults for optional parameters):
 ```
-gizmos.tree(
+html = gizmos.tree(       # returns: HTML string
     database,             # string: path to database
     term_id,              # string: term ID to show or None
     href="?id={curie}",   # string: format for hrefs
