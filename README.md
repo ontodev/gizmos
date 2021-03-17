@@ -85,7 +85,7 @@ python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
 ```
 
 Usage in Python (with defaults for optional parameters):
-```
+```python
 json = gizmos.search(    # returns: JSON string
     database,            # string: path to database
     search_text,         # string: text to search
@@ -126,15 +126,15 @@ python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 ```
 
 Usage in Python (with defaults for optional parameters):
-```
-html = gizmos.tree(       # returns: HTML string
-    database,             # string: path to database
-    term_id,              # string: term ID to show or None
-    href="?id={curie}",   # string: format for hrefs
-    title=None,           # string: title to display
-    predicate_ids=None,   # list: IDs of predicates to include
-    include_search=False, # boolean: if True, include search bar
-    standalone=True       # boolean: if False, do not include HTML headers
+```python
+html = gizmos.tree(        # returns: HTML string
+    database,              # string: path to database
+    term_id,               # string: term ID to show or None
+    href="?id={curie}",    # string: format for hrefs
+    title=None,            # string: title to display
+    predicate_ids=None,    # list: IDs of predicates to include
+    include_search=False,  # boolean: if True, include search bar
+    standalone=True        # boolean: if False, do not include HTML headers
 )
 ```
 
