@@ -56,10 +56,21 @@ def check_statements(cur):
         logger.error("'statements' is missing column(s): " + ", ".join(missing))
         return False
     if bad_type:
-        logger.error(
-            "'statements' column(s) do not have type 'TEXT': " + ", ".join(bad_type)
-        )
+        logger.error("'statements' column(s) do not have type 'TEXT': " + ", ".join(bad_type))
         return False
+
+    # Check for an index on the stanza column, warn if missing (do not fail)
+    has_stanza_idx = False
+    cur.execute("PRAGMA index_list(statements)")
+    for row in cur.fetchall():
+        index = row[1]
+        cur.execute(f"PRAGMA index_info({index})")
+        col = cur.fetchone()[2]
+        if col == "stanza":
+            has_stanza_idx = True
+            break
+    if not has_stanza_idx:
+        logger.warning("missing index on 'stanza' column")
 
     # Get prefixes to check against
     cur.execute("SELECT prefix, base FROM prefix")
@@ -89,16 +100,12 @@ def check_statements(cur):
                 if col == "stanza":
                     # Stanza should never be blank node, everything else is OK
                     # TODO: should we warn on blank predicate?
-                    logger.error(
-                        f"{col} '{value}' should be a named entity"
-                    )
+                    logger.error(f"{col} '{value}' should be a named entity")
                     statements_ok = False
                 continue
             prefix = value.split(":")[0]
             if prefix not in prefixes:
-                logger.error(
-                    f"{col} '{value}' does not have a valid prefix"
-                )
+                logger.error(f"{col} '{value}' does not have a valid prefix")
                 statements_ok = False
     return statements_ok
 

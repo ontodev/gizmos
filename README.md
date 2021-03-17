@@ -15,6 +15,11 @@ There are some dependencies that are test-only (e.g., will not be listed in the 
 
 Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
 
+After loading the OWL into the database, we highly recommend creating an index on the `stanza` column to speed up operations. Other indexes are optional.
+```
+sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
+```
+
 ### `gizmos.check`
 
 The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `gizmos.check` before using the other commands.
@@ -26,6 +31,10 @@ This command will check that both the `prefix` and `statements` tables exist wit
 * all CURIEs use valid prefixes
 * `stanza` is never a blank node
 * `stanza`, `subject`, and `predicate` are never `NULL`
+
+`check` will also warn on the following:
+* missing index on `stanza` column
+* full IRIs that use a base defined in `prefix`
 
 All errors are logged, and if errors are found, the command will exit with status code `1`.
 
