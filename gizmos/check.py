@@ -9,6 +9,7 @@ def check_prefix(cur):
     """Check the structure of the prefix table. It must have the columns 'prefix' and 'base'."""
     logger = logging.getLogger()
 
+    # Check for required columns
     cur.execute("PRAGMA table_info(prefix)")
     columns = {x[1]: x[2] for x in cur.fetchall()}
     missing = []
@@ -25,6 +26,17 @@ def check_prefix(cur):
     if bad_type:
         logger.error("'prefix' column(s) do not have type 'TEXT': " + ", ".join(bad_type))
         return False
+
+    # Check for required prefixes
+    missing_prefixes = []
+    for prefix in ["owl", "rdf", "rdfs"]:
+        cur.execute("SELECT * FROM prefix WHERE prefix = ?", (prefix,))
+        res = cur.fetchone()
+        if not res:
+            missing_prefixes.append(prefix)
+    if missing_prefixes:
+        logger.error("'prefix' is missing required prefixes: " + ", ".join(missing_prefixes))
+
     return True
 
 
