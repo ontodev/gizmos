@@ -63,17 +63,29 @@ def get_names(db_path, text, limit, label="rdfs:label", short_label=None, synony
 
             # Get short labels
             if short_label:
-                cur.execute(
-                    f"""SELECT DISTINCT subject, value
-                        FROM statements
-                        WHERE predicate = "{short_label}"
-                        AND value LIKE "%{text}%";"""
-                )
-                for res in cur.fetchall():
-                    term_id = res["subject"]
-                    if term_id not in names:
-                        names[term_id] = dict()
-                    names[term_id]["short_label"] = res["value"]
+                if short_label.lower() == "id":
+                    cur.execute(
+                        f'SELECT DISTINCT stanza FROM statements WHERE stanza LIKE "%{text}%";'
+                    )
+                    for res in cur.fetchall():
+                        term_id = res["stanza"]
+                        if term_id not in names:
+                            names[term_id] = dict()
+                        if term_id.startswith("<") and term_id.endswith(">"):
+                            term_id = term_id[1:-1]
+                        names[term_id]["short_label"] = term_id
+                else:
+                    cur.execute(
+                        f"""SELECT DISTINCT subject, value
+                            FROM statements
+                            WHERE predicate = "{short_label}"
+                            AND value LIKE "%{text}%";"""
+                    )
+                    for res in cur.fetchall():
+                        term_id = res["subject"]
+                        if term_id not in names:
+                            names[term_id] = dict()
+                        names[term_id]["short_label"] = res["value"]
 
             # Get synonyms
             if synonyms:
@@ -139,13 +151,19 @@ def get_names(db_path, text, limit, label="rdfs:label", short_label=None, synony
 
         if not term_short_label:
             # Short label did not match text, retrieve it to display
-            cur.execute(
-                "SELECT DISTINCT value FROM statements WHERE predicate = ? AND stanza = ?",
-                (short_label, term_id),
-            )
-            res = cur.fetchone()
-            if res:
-                term_short_label = res["value"]
+            if short_label.lower() == "id":
+                if term_id.startswith("<") and term_id.endswith(">"):
+                    term_short_label = term_id[1:-1]
+                else:
+                    term_short_label = term_id
+            else:
+                cur.execute(
+                    "SELECT DISTINCT value FROM statements WHERE predicate = ? AND stanza = ?",
+                    (short_label, term_id),
+                )
+                res = cur.fetchone()
+                if res:
+                    term_short_label = res["value"]
 
         term_to_match[term_id] = matched_value
         # Add results to JSON output

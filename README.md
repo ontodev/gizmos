@@ -106,11 +106,11 @@ Each returned object has the following attributes:
 
 By default, the label will use the `rdfs:label` property. You can override this with `--label <term>`/`-L <term>`.
 
-A short label is only included if you include a property with `--short-label <term>`/`-S <term>`. The same goes for synonyms, which are only included if `--synonym`/`-s <term>` is specified. You may include more than one synonym property with multiple `-s` options. Synonyms are only shown in the search result if they match the search text, whereas a short label is always shown (if the term has one).
+A short label is only included if you include a property with `--short-label <term>`/`-S <term>`. To set the short label to the term's ID, use `--short-label ID`. The same goes for synonyms, which are only included if `--synonym`/`-s <term>` is specified. You may include more than one synonym property with multiple `-s` options. Synonyms are only shown in the search result if they match the search text, whereas a short label is always shown (if the term has one).
 
 When both short label and synonym(s) are provided and the matching term has both properties, the search result is shown as:
 
-> label - short label - synonym
+> short label - label - synonym
 
 Search is run over all three properties, so even if a term's label does not match the text, it may still be returned if the synonym matches.
 

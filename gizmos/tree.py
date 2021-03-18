@@ -473,7 +473,7 @@ function configure_typeahead(node) {
   }
   table = node.id.replace("-typeahead", "");
   var bloodhound = new Bloodhound({
-    datumTokenizer: Bloodhound.tokenizers.obj.nonword('label', 'short_label', 'synonym'),
+    datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
     queryTokenizer: Bloodhound.tokenizers.nonword,
     sorter: function(a, b) {
       return a.order - b.order;
@@ -497,13 +497,15 @@ function configure_typeahead(node) {
     source: bloodhound,
     display: function(item) {
       if (item.label && item.short_label && item.synonym) {
-        return item.label + ' - ' + item.short_label + ' - ' + item.synonym;
+        return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
       } else if (item.label && item.short_label) {
-        return item.label + ' - ' + item.short_label;
+        return item.short_label + ' - ' + item.label;
       } else if (item.label && item.synonym) {
         return item.label + ' - ' + item.synonym;
       } else if (item.short_label && item.synonym) {
         return item.short_label + ' - ' + item.synonym;
+      } else if (item.short_label && !item.label) {
+        return item.short_label;
       } else {
         return item.label;
       }
