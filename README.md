@@ -11,9 +11,40 @@ python3 setup.py pytest
 
 There are some dependencies that are test-only (e.g., will not be listed in the project requirements). If you try and run `pytest` alone, it may fail due to missing dependencies.
 
-## Modules
+### Databases
 
 Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
+
+The following prefixes are required to be defined in the `prefix` table for the `gizmos` commands to work:
+* `owl`: `http://www.w3.org/2002/07/owl#`
+* `rdf`: `http://www.w3.org/1999/02/22-rdf-syntax-ns#`
+* `rdfs`: `http://www.w3.org/2000/01/rdf-schema#`
+
+After loading the OWL into the database, we highly recommend creating an index on the `stanza` column to speed up operations. Other indexes are optional.
+```
+sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
+```
+
+## Modules
+
+### `gizmos.check`
+
+The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `gizmos.check` before using the other commands.
+```
+python3 -m gizmos.check [path-to-database]
+```
+
+This command will check that both the `prefix` and `statements` tables exist with valid columns as defined by [rdftab](https://github.com/ontodev/rdftab.rs). If those tables are valid, it checks the contents of `prefix` and `statements` to make sure that:
+* required prefixes are defined (see [Databases](#databases))
+* all CURIEs use valid prefixes
+* `stanza` is never a blank node
+* `stanza`, `subject`, and `predicate` are never `NULL`
+
+`check` will also warn on the following:
+* missing index on `stanza` column
+* full IRIs that use a base defined in `prefix`
+
+All errors are logged, and if errors are found, the command will exit with status code `1`. Only the first 10 messages about specific rows in the `statements` table are logged to save time. If you wish to override this, use the `--limit <int>`/`-l <int>` option. To print all messages, include `--limit none`.
 
 ### `gizmos.export`
 
