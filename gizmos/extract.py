@@ -5,7 +5,7 @@ import sys
 
 from argparse import ArgumentParser
 from rdflib import Graph
-from .helpers import add_labels, dict_factory, get_ids, get_terms
+from .helpers import add_labels, get_connection, get_ids, get_terms
 
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
@@ -32,7 +32,9 @@ The CURIEs must use a prefix from the 'prefixes' table.
 
 def main():
     p = ArgumentParser()
-    p.add_argument("-d", "--database", required=True, help="SQLite database")
+    p.add_argument(
+        "-d", "--database", required=True, help="Database file (.db) or configuration (.ini)"
+    )
     p.add_argument("-t", "--term", action="append", help="CURIE or label of term to extract")
     p.add_argument(
         "-T", "--terms", help="File containing CURIES or labels of terms to extract",
@@ -63,9 +65,21 @@ def extract(args):
 
     # Maybe get predicates to include
     predicates = get_terms(args.predicate, args.predicates)
-    return extract_terms(
-        args.database, terms, predicates, fmt=args.format, no_hierarchy=args.no_hierarchy
-    )
+    conn = get_connection(args.database)
+    try:
+        return extract_terms(
+            conn, terms, predicates, fmt=args.format, no_hierarchy=args.no_hierarchy
+        )
+    finally:
+        cur = conn.cursor()
+        clean(cur)
+
+
+def clean(cur):
+    cur.execute("DROP TABLE IF EXISTS tmp_labels")
+    cur.execute("DROP TABLE IF EXISTS tmp_terms")
+    cur.execute("DROP TABLE IF EXISTS tmp_predicates")
+    cur.execute("DROP TABLE IF EXISTS tmp_extract")
 
 
 def escape(curie):
@@ -80,191 +94,205 @@ def escape_qnames(cur):
     """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
     for keyword in ["stanza", "subject", "predicate", "object"]:
         cur.execute(
-            f"""
-            UPDATE tmp.extract SET {keyword} = esc({keyword})
-            WHERE {keyword} IN
-              (SELECT DISTINCT {keyword}
-               FROM tmp.extract WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%');"""
+            f"""SELECT DISTINCT {keyword} FROM tmp_extract
+                WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%'"""
         )
+        for row in cur.fetchall():
+            curie = row[0]
+            escaped = escape(curie)
+            if curie != escaped:
+                cur.execute(
+                    f"UPDATE tmp_extract SET {keyword} = '{escaped}' WHERE {keyword} = '{curie}'"
+                )
 
 
-def extract_terms(database, terms, predicates, fmt="ttl", no_hierarchy=False):
+def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
         raise Exception("Unknown format: " + fmt)
 
     # Create a new table (extract) and copy the triples we care about
     # Then write the triples from that table to the output file
-    with sqlite3.connect(database) as conn:
-        conn.row_factory = dict_factory
-        cur = conn.cursor()
+    cur = conn.cursor()
 
-        # Create a temp labels table
-        cur.execute("ATTACH DATABASE '' AS tmp")
-        add_labels(cur)
+    # Pre-clean up
+    clean(cur)
 
-        term_ids = get_ids(cur, terms)
+    # Create a temp labels table
+    add_labels(cur)
 
-        predicate_ids = None
-        if predicates:
-            # Current predicates are IDs or labels - make sure we get all the IDs
-            predicate_ids = get_ids(cur, predicates)
+    term_ids = get_ids(cur, terms)
 
-        # Create the terms table containing parent -> child relationships
-        cur.execute("CREATE TABLE tmp.terms(parent TEXT NOT NULL, child TEXT)")
-        cur.executemany("INSERT INTO tmp.terms VALUES (?, NULL)", [(x,) for x in term_ids])
+    predicate_ids = None
+    if predicates:
+        # Current predicates are IDs or labels - make sure we get all the IDs
+        predicate_ids = get_ids(cur, predicates)
 
-        # Create tmp predicates table
-        cur.execute("CREATE TABLE tmp.predicates(predicate TEXT PRIMARY KEY NOT NULL)")
-        if predicate_ids:
-            cur.executemany(
-                "INSERT OR IGNORE INTO tmp.predicates VALUES (?)", [(x,) for x in predicate_ids]
-            )
-        else:
-            # Insert all predicates
+    # Create the terms table containing parent -> child relationships
+    cur.execute("CREATE TABLE tmp_terms(parent TEXT NOT NULL, child TEXT)")
+    for term_id in term_ids:
+        cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', NULL)")
+
+    # Create tmp predicates table
+    cur.execute("CREATE TABLE tmp_predicates(predicate TEXT PRIMARY KEY NOT NULL)")
+    if predicate_ids:
+        for predicate_id in predicate_ids:
+            if isinstance(cur, sqlite3.Cursor):
+                cur.execute(f"INSERT OR IGNORE INTO tmp_predicates VALUES ('{predicate_id}')")
+            else:
+                cur.execute(
+                    f"""INSERT INTO tmp_predicates VALUES ('{predicate_id}')
+                        ON CONFLICT (predicate) DO NOTHING"""
+                )
+    else:
+        # Insert all predicates
+        if isinstance(cur, sqlite3.Cursor):
             cur.execute(
-                """INSERT OR IGNORE INTO tmp.predicates
+                """INSERT OR IGNORE INTO tmp_predicates
                 SELECT DISTINCT predicate
                 FROM statements WHERE predicate NOT IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
             )
-
-        if not no_hierarchy:
-            # Add subclasses & subproperties
+        else:
             cur.execute(
-                """WITH RECURSIVE ancestors(parent, child) AS (
-                    SELECT * FROM terms
-                    UNION
-                    SELECT object AS parent, subject AS child
-                    FROM statements, ancestors
-                    WHERE ancestors.parent = statements.stanza
-                      AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                      AND statements.object NOT LIKE '_:%'
-                  )
-                  INSERT INTO tmp.terms
-                  SELECT parent, child FROM ancestors"""
+                """INSERT INTO tmp_predicates
+                SELECT DISTINCT predicate
+                FROM statements WHERE predicate NOT IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                ON CONFLICT (predicate) DO NOTHING"""
             )
 
+    if not no_hierarchy:
+        # Add subclasses & subproperties
         cur.execute(
-            """CREATE TABLE tmp.extract(
-                 stanza TEXT,
-                 subject TEXT,
-                 predicate TEXT,
-                 object TEXT,
-                 value TEXT,
-                 datatype TEXT,
-                 language TEXT
-               )"""
+            """WITH RECURSIVE ancestors(parent, child) AS (
+                SELECT * FROM tmp_terms
+                UNION
+                SELECT object AS parent, subject AS child
+                FROM statements, ancestors
+                WHERE ancestors.parent = statements.stanza
+                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                  AND statements.object NOT LIKE '_:%'
+              )
+              INSERT INTO tmp_terms
+              SELECT parent, child FROM ancestors"""
         )
 
-        # Insert rdf:type declarations
-        cur.execute(
-            """INSERT INTO tmp.extract
-            SELECT * FROM statements
-            WHERE subject IN (SELECT DISTINCT parent FROM terms) AND predicate = 'rdf:type'"""
-        )
+    cur.execute(
+        """CREATE TABLE tmp_extract(
+             stanza TEXT,
+             subject TEXT,
+             predicate TEXT,
+             object TEXT,
+             value TEXT,
+             datatype TEXT,
+             language TEXT
+           )"""
+    )
 
-        # Insert subclass statements:
-        # - parent is a class if it's used in subclass statement
-        # - this allows us to get around undeclared classes, e.g. owl:Thing
-        cur.execute(
-            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
-            SELECT DISTINCT t.child, t.child, 'rdfs:subClassOf', t.parent
-            FROM terms t
-            JOIN statements s ON t.parent = s.object
-            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subClassOf'"""
-        )
+    # Insert rdf:type declarations
+    cur.execute(
+        """INSERT INTO tmp_extract
+        SELECT * FROM statements
+        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms) AND predicate = 'rdf:type'"""
+    )
 
-        # Insert subproperty statements (same as above)
-        cur.execute(
-            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
-            SELECT DISTINCT t.child, t.child, 'rdfs:subPropertyOf', t.parent
-            FROM terms t
-            JOIN statements s ON t.parent = s.object
-            WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subPropertyOf'"""
-        )
+    # Insert subclass statements:
+    # - parent is a class if it's used in subclass statement
+    # - this allows us to get around undeclared classes, e.g. owl:Thing
+    cur.execute(
+        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
+        SELECT DISTINCT t.child, t.child, 'rdfs:subClassOf', t.parent
+        FROM tmp_terms t
+        JOIN statements s ON t.parent = s.object
+        WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subClassOf'"""
+    )
 
-        # Insert literal annotations
-        cur.execute(
-            """INSERT INTO tmp.extract
-            SELECT *
-            FROM statements
-            WHERE subject IN (SELECT DISTINCT parent FROM terms)
-              AND predicate IN (SELECT predicate FROM predicates)
-              AND value IS NOT NULL"""
-        )
+    # Insert subproperty statements (same as above)
+    cur.execute(
+        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
+        SELECT DISTINCT t.child, t.child, 'rdfs:subPropertyOf', t.parent
+        FROM tmp_terms t
+        JOIN statements s ON t.parent = s.object
+        WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subPropertyOf'"""
+    )
 
-        # Insert logical relationships (object must be in set of input terms)
-        cur.execute(
-            """INSERT INTO tmp.extract
-            SELECT * FROM statements
-            WHERE subject IN (SELECT DISTINCT parent FROM terms)
-              AND predicate IN (SELECT predicate FROM predicates)
-              AND object IN (SELECT DISTINCT parent FROM terms)"""
-        )
+    # Insert literal annotations
+    cur.execute(
+        """INSERT INTO tmp_extract
+        SELECT *
+        FROM statements
+        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms)
+          AND predicate IN (SELECT predicate FROM tmp_predicates)
+          AND value IS NOT NULL"""
+    )
 
-        # Insert IRI annotations (object does not have to be in input terms)
-        cur.execute(
-            """INSERT INTO tmp.extract (stanza, subject, predicate, object)
-            SELECT s1.stanza, s1.subject, s1.predicate, s1.object
-            FROM statements s1
-            JOIN statements s2 ON s1.predicate = s2.subject
-            WHERE s1.subject IN (SELECT DISTINCT parent FROM terms)
-              AND s1.predicate IN (SELECT predicate FROM predicates)
-              AND s2.object = 'owl:AnnotationProperty'
-              AND s1.object NOT NULL"""
-        )
+    # Insert logical relationships (object must be in set of input terms)
+    cur.execute(
+        """INSERT INTO tmp_extract
+        SELECT * FROM statements
+        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms)
+          AND predicate IN (SELECT predicate FROM tmp_predicates)
+          AND object IN (SELECT DISTINCT parent FROM tmp_terms)"""
+    )
 
-        # Create esc function
-        conn.create_function("esc", 1, escape)
-        escape_qnames(cur)
+    # Insert IRI annotations (object does not have to be in input terms)
+    cur.execute(
+        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
+        SELECT s1.stanza, s1.subject, s1.predicate, s1.object
+        FROM statements s1
+        JOIN statements s2 ON s1.predicate = s2.subject
+        WHERE s1.subject IN (SELECT DISTINCT parent FROM tmp_terms)
+          AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
+          AND s2.object = 'owl:AnnotationProperty'
+          AND s1.object IS NOT NULL"""
+    )
 
-        # Reset row factory
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        ttl = "\n".join(get_ttl(cur))
-        if fmt.lower() == "ttl":
-            return ttl
+    # Escape QNames
+    escape_qnames(cur)
 
-        # Otherwise the format is JSON
-        graph = Graph()
-        graph.parse(data=ttl, format="turtle")
+    ttl = "\n".join(get_ttl(cur))
+    if fmt.lower() == "ttl":
+        return ttl
 
-        # Create the context with prefixes
-        cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
-        context = {}
-        for row in cur.fetchall():
-            context[row["prefix"]] = {"@id": row["base"], "@type": "@id"}
-        return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")
+    # Otherwise the format is JSON
+    graph = Graph()
+    graph.parse(data=ttl, format="turtle")
+
+    # Create the context with prefixes
+    cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
+    context = {}
+    for row in cur.fetchall():
+        context[row[0]] = {"@id": row[1], "@type": "@id"}
+    return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")
 
 
 def get_ttl(cur):
     """Get the 'extract' table as lines of Turtle (the lines are returned as a list)."""
     # Get ttl lines
     cur.execute(
-        '''WITH literal(value, escaped) AS (
+        """WITH literal(value, escaped) AS (
               SELECT DISTINCT
                 value,
                 replace(replace(replace(value, '\\', '\\\\'), '"', '\\"'), '
             ', '\\n') AS escaped
-              FROM extract
+              FROM tmp_extract
             )
             SELECT
-              "@prefix " || prefix || ": <" || base || "> ."
+              '@prefix ' || prefix || ': <' || base || '> .'
             FROM prefix
             UNION ALL
             SELECT DISTINCT
                subject
-            || " "
+            || ' '
             || predicate
-            || " "
+            || ' '
             || coalesce(
                  object,
-                 """" || escaped || """^^" || datatype,
-                 """" || escaped || """@" || language,
-                 """" || escaped || """"
+                 '"' || escaped || '"^^' || datatype,
+                 '"' || escaped || '"@' || language,
+                 '"' || escaped || '"'
                )
-            || " ."
-            FROM extract LEFT JOIN literal ON extract.value = literal.value;'''
+            || ' .'
+            FROM tmp_extract LEFT JOIN literal ON tmp_extract.value = literal.value;"""
     )
     lines = []
     for row in cur.fetchall():

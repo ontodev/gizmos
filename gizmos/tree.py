@@ -2,12 +2,12 @@
 
 import logging
 import os
-import sqlite3
 import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import render
+from .helpers import get_connection
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -67,7 +67,7 @@ typeahead_js = "https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typea
 
 def main():
     p = ArgumentParser("tree.py", description="create an HTML page to display an ontology term")
-    p.add_argument("db", help="SQLite database")
+    p.add_argument("db", help="Database file (.db) or configuration (.ini)")
     p.add_argument("term", help="CURIE of ontology term to display", nargs="?")
     p.add_argument("-t", "--title", help="Optional tree title")
     p.add_argument("-p", "--predicate", action="append", help="CURIE of predicate to include")
@@ -105,10 +105,14 @@ def main():
         if args.include_db:
             href += "&db={db}"
 
+    treename = os.path.splitext(os.path.basename(args.db))[0]
+    conn = get_connection(args.db)
+
     # Run tree and write HTML to stdout
     sys.stdout.write(
         tree(
-            args.db,
+            conn,
+            treename,
             args.term,
             title=args.title,
             href=href,
@@ -120,7 +124,8 @@ def main():
 
 
 def tree(
-    db,
+    conn,
+    treename,
     term,
     href="?id={curie}",
     title=None,
@@ -128,20 +133,17 @@ def tree(
     include_search=False,
     standalone=True,
 ):
-    treename = os.path.splitext(os.path.basename(db))[0]
-    with sqlite3.connect(db) as conn:
-        conn.row_factory = dict_factory
-        cur = conn.cursor()
-        return build_tree(
-            cur,
-            treename,
-            term_id=term,
-            title=title,
-            href=href,
-            predicate_ids=predicate_ids,
-            include_search=include_search,
-            standalone=standalone,
-        )
+    cur = conn.cursor()
+    return build_tree(
+        cur,
+        treename,
+        term_id=term,
+        title=title,
+        href=href,
+        predicate_ids=predicate_ids,
+        include_search=include_search,
+        standalone=standalone,
+    )
 
 
 def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term={curie}"):
@@ -329,7 +331,7 @@ def build_tree(
     If there are no terms, create the HTML vector for all top-level classes."""
     # Get the prefixes
     cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
-    all_prefixes = [(x["prefix"], x["base"]) for x in cur.fetchall()]
+    all_prefixes = [(x[0], x[1]) for x in cur.fetchall()]
 
     ps = set()
     body = []
@@ -370,8 +372,11 @@ def build_tree(
         elif not predicate_ids:
             predicate_ids = get_sorted_predicates(cur)
 
-        cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}'")
-        stanza = cur.fetchall()
+        cur.execute(
+            f"""SELECT stanza, subject, predicate, object, value, datatype, language
+                FROM statements WHERE stanza = '{term_id}'"""
+        )
+        stanza = create_stanza(cur.fetchall())
         p, t = term2rdfa(
             cur, all_prefixes, treename, predicate_ids, term_id, stanza, title=title, href=href
         )
@@ -671,6 +676,24 @@ def build_tree(
     return render(all_prefixes, html, href=href, db=treename)
 
 
+def create_stanza(results):
+    """Create a dictionary version of the results of the stanza query"""
+    stanza = []
+    for row in results:
+        stanza.append(
+            {
+                "stanza": row[0],
+                "subject": row[1],
+                "predicate": row[2],
+                "object": row[3],
+                "value": row[4],
+                "datatype": row[5],
+                "language": row[6],
+            }
+        )
+    return stanza
+
+
 def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id={curie}"):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
@@ -685,8 +708,11 @@ def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id
              AND object = 'owl:Class' AND subject NOT LIKE '_:%');"""
     )
     res = cur.fetchall()
-    add_children = [x["subject"] for x in res if x["subject"] != "owl:Thing"]
-    cur.execute(f"SELECT * FROM statements WHERE stanza = 'owl:Thing'")
+    add_children = [x[0] for x in res if x[0] != "owl:Thing"]
+    cur.execute(
+        """SELECT stanza, subject, predicate, object, value, datatype, language
+           FROM statements WHERE stanza = 'owl:Thing'"""
+    )
     stanza = cur.fetchall()
     if not stanza:
         stanza = [
@@ -700,6 +726,8 @@ def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id
                 "language": None,
             }
         ]
+    else:
+        stanza = create_stanza(cur.fetchall())
     return term2rdfa(
         cur,
         all_prefixes,
@@ -723,27 +751,20 @@ def curie2iri(prefixes, curie):
     raise ValueError(f"No matching prefix for {curie}")
 
 
-def dict_factory(cursor, row):
-    """Create a dict factory for sqlite cursor"""
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
-
-
 def get_entity_type(cur, term_id):
     """Get the OWL entity type for a term."""
     cur.execute(
-        f"SELECT object FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}' AND predicate = 'rdf:type'"
+        f"""SELECT object FROM statements
+            WHERE stanza = '{term_id}' AND subject = '{term_id}' AND predicate = 'rdf:type'"""
     )
     res = cur.fetchall()
     if len(res) > 1:
         for r in res:
-            if r["object"] in TOP_LEVELS:
-                return r["object"]
+            if r[0] in TOP_LEVELS:
+                return r[0]
         return "owl:Individual"
     elif len(res) == 1:
-        entity_type = res[0]["object"]
+        entity_type = res[0][0]
         if entity_type == "owl:NamedIndividual":
             entity_type = "owl:Individual"
         return entity_type
@@ -752,14 +773,14 @@ def get_entity_type(cur, term_id):
         cur.execute(
             f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'"
         )
-        preds = [row["predicate"] for row in cur.fetchall()]
+        preds = [row[0] for row in cur.fetchall()]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
         elif "rdfs:subPropertyOf" in preds:
             return "owl:AnnotationProperty"
         if not entity_type:
             cur.execute(f"SELECT predicate FROM statements WHERE object = '{term_id}'")
-            preds = [row["predicate"] for row in cur.fetchall()]
+            preds = [row[0] for row in cur.fetchall()]
             if "rdfs:subClassOf" in preds:
                 return "owl:Class"
             elif "rdfs:subPropertyOf" in preds:
@@ -812,7 +833,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
         )
         res = cur.fetchall()
     if add_children:
-        res.extend([{"parent": term_id, "child": child} for child in add_children])
+        res.extend([[term_id, child] for child in add_children])
 
     hierarchy = {
         entity_type: {"parents": [], "children": []},
@@ -821,7 +842,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
     curies = set()
     for row in res:
         # Consider the parent column of the current row:
-        parent = row["parent"]
+        parent = row[0]
         if not parent or parent == "owl:Thing":
             continue
         # If it is not null, add it to the list of all of the compact URIs described by this tree:
@@ -834,7 +855,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
             }
 
         # Consider the child column of the current row:
-        child = row["child"]
+        child = row[1]
         if not child:
             continue
         # If it is not null, add it to the list of all the compact URIs described by this tree:
@@ -872,7 +893,7 @@ def get_sorted_predicates(cur, exclude_ids=None):
 
     # Retrieve all predicate IDs
     cur.execute("SELECT DISTINCT predicate FROM statements")
-    all_predicate_ids = [x["predicate"] for x in cur.fetchall()]
+    all_predicate_ids = [x[0] for x in cur.fetchall()]
     if exclude:
         all_predicate_ids = [x for x in all_predicate_ids if x not in exclude_ids]
 
@@ -882,7 +903,7 @@ def get_sorted_predicates(cur, exclude_ids=None):
         f"""SELECT DISTINCT subject, value
         FROM statements WHERE subject IN ({ap_str}) AND predicate = 'rdfs:label';"""
     )
-    predicate_label_map = {x["subject"]: x["value"] for x in cur.fetchall()}
+    predicate_label_map = {x[0]: x[1] for x in cur.fetchall()}
 
     # Add unlabeled predicates to map with label = ID
     for p in all_predicate_ids:
@@ -900,13 +921,14 @@ def get_ontology(cur, prefixes):
     res = cur.fetchone()
     if not res:
         return None, None
-    iri = res["subject"]
+    iri = res[0]
     dct = "<http://purl.org/dc/terms/title>"
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
     cur.execute(
-        f"SELECT value FROM statements WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'"
+        f"""SELECT value FROM statements
+            WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'"""
     )
     res = cur.fetchone()
     if not res:
@@ -975,7 +997,7 @@ def term2rdfa(
                          AND object = '{term_id}' AND subject NOT LIKE '_:%'
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
                 )
-            children = [row["subject"] for row in cur.fetchall()]
+            children = [row[0] for row in cur.fetchall()]
             child_children = defaultdict(set)
             if pred:
                 # Get children of children for classes & properties
@@ -985,10 +1007,10 @@ def term2rdfa(
                     WHERE predicate = '{pred}' AND object IN ({children_str})"""
                 )
                 for row in cur.fetchall():
-                    p = row["parent"]
+                    p = row[0]
                     if p not in child_children:
                         child_children[p] = set()
-                    child_children[p].add(row["child"])
+                    child_children[p].add(row[1])
             hierarchy = {term_id: {"parents": [], "children": children}}
             curies = {term_id}
             for c in children:
@@ -1025,8 +1047,8 @@ def term2rdfa(
         AND predicate = 'rdfs:label'
         AND value IS NOT NULL"""
     )
-    for row in cur:
-        labels[row["subject"]] = row["value"]
+    for row in cur.fetchall():
+        labels[row[0]] = row[1]
     for t, o_label in TOP_LEVELS.items():
         labels[t] = o_label
     if ontology_iri and ontology_title:
@@ -1074,10 +1096,10 @@ def term2rdfa(
     subject_label = None
     if term_id == "ontology" and ontology_iri:
         cur.execute(
-            f"""SELECT * FROM statements
+            f"""SELECT stanza, subject, predicate, object, value, datatype, language FROM statements
             WHERE subject = '{ontology_iri}'"""
         )
-        stanza = cur.fetchall()
+        stanza = create_stanza(cur.fetchall())
         subject = ontology_iri
         subject_label = data["labels"].get(ontology_iri, ontology_iri)
         si = curie2iri(prefixes, subject)

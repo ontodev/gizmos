@@ -1,5 +1,8 @@
+import psycopg2
+import sqlite3
+
 from gizmos.export import export_terms
-from util import test_db, create_db, compare_graphs
+from util import test_conn, test_db, create_postgresql_db, create_sqlite_db, compare_graphs
 
 
 def get_diff(actual_lines, expected_lines):
@@ -10,8 +13,8 @@ def get_diff(actual_lines, expected_lines):
     return removed + added
 
 
-def test_export(create_db):
-    tsv = export_terms(test_db, ["OBI:0100046"], ["CURIE", "label", "definition"], "tsv")
+def export(conn):
+    tsv = export_terms(conn, ["OBI:0100046"], ["CURIE", "label", "definition"], "tsv")
     actual_lines = tsv.split("\n")
 
     expected_lines = []
@@ -28,8 +31,8 @@ def test_export(create_db):
     assert not diff
 
 
-def test_export_no_predicates(create_db):
-    tsv = export_terms(test_db, ["OBI:0100046"], None, "tsv", default_value_format="CURIE")
+def export_no_predicates(conn):
+    tsv = export_terms(conn, ["OBI:0100046"], None, "tsv", default_value_format="CURIE")
     with open("test.tsv", "w") as f:
         f.write(tsv)
     actual_lines = tsv.split("\n")
@@ -47,3 +50,23 @@ def test_export_no_predicates(create_db):
         for line in diff:
             print(line)
     assert not diff
+
+
+def test_export_postgresql(create_postgresql_db):
+    with psycopg2.connect(test_conn) as conn:
+        export(conn)
+
+
+def test_export_no_predicates_postgresql(create_postgresql_db):
+    with psycopg2.connect(test_conn) as conn:
+        export(conn)
+
+
+def test_export_sqlite(create_sqlite_db):
+    with sqlite3.connect(test_db) as conn:
+        export(conn)
+
+
+def test_export_no_predicates_sqlite(create_sqlite_db):
+    with sqlite3.connect(test_db) as conn:
+        export(conn)
