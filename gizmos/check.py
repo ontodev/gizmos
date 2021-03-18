@@ -40,7 +40,7 @@ def check_prefix(cur):
     return True
 
 
-def check_statements(cur):
+def check_statements(cur, limit=10):
     """Check the structure of the statements table then check the values of the columns."""
     logger = logging.getLogger()
     statements_ok = True
@@ -89,7 +89,11 @@ def check_statements(cur):
     prefixes = {x[0]: x[1] for x in cur.fetchall()}
 
     # Check subjects, stanzas, predicates, and objects
+    message_count = 0
     for col in ["stanza", "subject", "predicate", "object"]:
+        if limit and message_count >= limit:
+            # Do not exceed the limit of messages
+            break
         cur.execute(f"SELECT {col} FROM statements")
         for row in cur.fetchall():
             value = row[0]
@@ -97,27 +101,32 @@ def check_statements(cur):
                 if col != "object":
                     # Object can be null when there is a value
                     logger.error(f"{col} cannot be NULL")
+                    message_count += 1
+                    statements_ok = False
                 continue
             if value.startswith("<") and value.endswith(">"):
                 iri = value.lstrip("<").rstrip(">")
                 for prefix, base in prefixes.items():
                     if iri.startswith(base):
                         logger.warning(f"{col} '{value}' can use prefix '{prefix}'")
+                        message_count += 1
                 continue
             if ":" not in value:
                 logger.error(f"{col} '{value}' is not a valid CURIE")
+                message_count += 1
                 statements_ok = False
                 continue
             if value.startswith("_:"):
-                if col == "stanza":
-                    # Stanza should never be blank node, everything else is OK
-                    # TODO: should we warn on blank predicate?
+                if col == "predicate":
+                    # Predicate should never be blank node, everything else is OK
                     logger.error(f"{col} '{value}' should be a named entity")
+                    message_count += 1
                     statements_ok = False
                 continue
             prefix = value.split(":")[0]
             if prefix not in prefixes:
                 logger.error(f"{col} '{value}' does not have a valid prefix")
+                message_count += 1
                 statements_ok = False
     return statements_ok
 
@@ -125,6 +134,7 @@ def check_statements(cur):
 def main():
     p = ArgumentParser()
     p.add_argument("db", help="Path to SQLite database to check")
+    p.add_argument("-l", "--limit", help="Max number of messages to log about rows", default="10")
     args = p.parse_args()
 
     # Set up logger
@@ -135,6 +145,17 @@ def main():
     logger.setLevel(logging.WARNING)
     ch.setLevel(logging.WARNING)
     logger.addHandler(ch)
+
+    # Parse limit
+    lim = args.limit
+    try:
+        limit = int(lim)
+    except ValueError:
+        if lim.lower() == "none":
+            limit = None
+        else:
+            logger.error("Invalid --limit option: " + lim)
+            sys.exit(1)
 
     with sqlite3.connect(args.db) as conn:
         cur = conn.cursor()
@@ -151,7 +172,7 @@ def main():
             logger.error("missing 'statements' table")
             statements_ok = False
         elif prefix_ok:
-            statements_ok = check_statements(cur)
+            statements_ok = check_statements(cur, limit=limit)
 
     if not statements_ok or not prefix_ok:
         sys.exit(1)

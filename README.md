@@ -44,7 +44,7 @@ This command will check that both the `prefix` and `statements` tables exist wit
 * missing index on `stanza` column
 * full IRIs that use a base defined in `prefix`
 
-All errors are logged, and if errors are found, the command will exit with status code `1`.
+All errors are logged, and if errors are found, the command will exit with status code `1`. Only the first 10 messages about specific rows in the `statements` table are logged to save time. If you wish to override this, use the `--limit <int>`/`-l <int>` option. To print all messages, include `--limit none`.
 
 ### `gizmos.export`
 
