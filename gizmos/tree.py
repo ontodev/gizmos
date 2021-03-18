@@ -451,90 +451,97 @@ def build_tree(
             # Add tree name to query params
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
-            """$('#search-form').submit(function () {
-        $(this)
-            .find('input[name]')
-            .filter(function () {
-                return !this.value;
-            })
-            .prop('name', '');
-    });
-    function jump(currentPage) {
-      newPage = prompt("Jump to page", currentPage);
-      if (newPage) {
-        href = window.location.href.replace("page="+currentPage, "page="+newPage);
-        window.location.href = href
-      }
-    };
-    function configure_typeahead(node) {
-      if (!node.id || !node.id.endsWith("-typeahead")) {
-        return;
-      }
-      table = node.id.replace("-typeahead", "")
-      var bloodhound = new Bloodhound({
-        datumTokenizer: Bloodhound.tokenizers.obj.nonword('display_name'),
-        queryTokenizer: Bloodhound.tokenizers.nonword,
-        sorter: function(a, b) {
-          A = a['display_name'].length;
-          B = b['display_name'].length;
-          if (A < B) {
-             return -1;
-          }
-          else if (A > B) {
-             return 1;
-          }
-          else return 0;
-        },
-        remote: {
-          url: """
+            """
+$('#search-form').submit(function () {
+    $(this)
+        .find('input[name]')
+        .filter(function () {
+            return !this.value;
+        })
+        .prop('name', '');
+});
+function jump(currentPage) {
+  newPage = prompt("Jump to page", currentPage);
+  if (newPage) {
+    href = window.location.href.replace("page="+currentPage, "page="+newPage);
+    window.location.href = href;
+  }
+}
+function configure_typeahead(node) {
+  if (!node.id || !node.id.endsWith("-typeahead")) {
+    return;
+  }
+  table = node.id.replace("-typeahead", "");
+  var bloodhound = new Bloodhound({
+    datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
+    queryTokenizer: Bloodhound.tokenizers.nonword,
+    sorter: function(a, b) {
+      return a.order - b.order;
+    },
+    remote: {
+      url: """
             + remote
             + """,
-          wildcard: '%QUERY',
-          transform : function(response) {
-              return bloodhound.sorter(response)
-          }
-        }
-      });
-      $(node).typeahead({
-        minLength: 0,
-        hint: false,
-        highlight: true
-      }, {
-        name: table,
-        source: bloodhound,
-        display: 'display_name',
-        limit: 40
-      });
-      $(node).bind('click', function(e) {
-        $(node).select();
-      });
-      $(node).bind('typeahead:select', function(ev, suggestion) {
-        $(node).prev().val(suggestion['value']);
-        go(table, suggestion['value'])
-      });
-      $(node).bind('keypress',function(e) {
-        if(e.which == 13) {
-          go(table, $('#' + table + '-hidden').val());
-        }
-      });
-    };
-    $('.typeahead').each(function() { configure_typeahead(this); });
-    function go(table, value) {
-      q = {}
-      table = table.replace('_all', '');
-      q[table] = value
-      window.location = query(q);
-    };
-    function query(obj) {
-      var str = [];
-      for (var p in obj)
-        if (obj.hasOwnProperty(p)) {
-          """
+      wildcard: '%QUERY',
+      transform : function(response) {
+          return bloodhound.sorter(response);
+      }
+    }
+  });
+  $(node).typeahead({
+    minLength: 0,
+    hint: false,
+    highlight: true
+  }, {
+    name: table,
+    source: bloodhound,
+    display: function(item) {
+      if (item.label && item.short_label && item.synonym) {
+        return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
+      } else if (item.label && item.short_label) {
+        return item.short_label + ' - ' + item.label;
+      } else if (item.label && item.synonym) {
+        return item.label + ' - ' + item.synonym;
+      } else if (item.short_label && item.synonym) {
+        return item.short_label + ' - ' + item.synonym;
+      } else if (item.short_label && !item.label) {
+        return item.short_label;
+      } else {
+        return item.label;
+      }
+    },
+    limit: 40
+  });
+  $(node).bind('click', function(e) {
+    $(node).select();
+  });
+  $(node).bind('typeahead:select', function(ev, suggestion) {
+    $(node).prev().val(suggestion.id);
+    go(table, suggestion.id);
+  });
+  $(node).bind('keypress',function(e) {
+    if(e.which == 13) {
+      go(table, $('#' + table + '-hidden').val());
+    }
+  });
+}
+$('.typeahead').each(function() { configure_typeahead(this); });
+function go(table, value) {
+  q = {}
+  table = table.replace('_all', '');
+  q[table] = value
+  window.location = query(q);
+}
+function query(obj) {
+  var str = [];
+  for (var p in obj)
+    if (obj.hasOwnProperty(p)) {
+      """
             + js_funct
             + """
-        }
-      return str.join("&");
-    }"""
+    }
+  return str.join("&");
+}"""
         )
 
     body.append(["script", {"type": "text/javascript"}, js])

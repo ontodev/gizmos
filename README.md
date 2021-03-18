@@ -106,6 +106,47 @@ The output contains the specified term and all its ancestors up to `owl:Thing`. 
 
 You may also specify which predicates you would like to include with `-p <term>`/`--predicate <term>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs or labels. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
 
+### `gizmos.search`
+
+The `search` module returns a list of JSON objects for use with the tree browser search bar.
+
+Usage in the command line:
+```
+python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
+```
+
+Usage in Python (with defaults for optional parameters):
+```python
+json = gizmos.search(    # returns: JSON string
+    database,            # string: path to database
+    search_text,         # string: text to search
+    label="rdfs:label",  # string: term ID for label
+    short_label=None,    # string: term ID for short label
+    synonyms=None,       # list: term IDs for synonyms
+    limit=30             # int: max results to return
+)
+```
+
+Each returned object has the following attributes:
+* `id`: The term ID
+* `label`: The term `rdfs:label` (or other property if specified)
+* `short_label`: The term's short label property value, if provided
+* `synonym`: The term's synonym property value, if provided
+* `property`: The term ID of the matched property (e.g., `rdfs:label`)
+* `order`: The order in which the term will appear in the search results, from shortest to longest match
+
+By default, the label will use the `rdfs:label` property. You can override this with `--label <term>`/`-L <term>`.
+
+A short label is only included if you include a property with `--short-label <term>`/`-S <term>`. To set the short label to the term's ID, use `--short-label ID`. The same goes for synonyms, which are only included if `--synonym`/`-s <term>` is specified. You may include more than one synonym property with multiple `-s` options. Synonyms are only shown in the search result if they match the search text, whereas a short label is always shown (if the term has one).
+
+When both short label and synonym(s) are provided and the matching term has both properties, the search result is shown as:
+
+> short label - label - synonym
+
+Search is run over all three properties, so even if a term's label does not match the text, it may still be returned if the synonym matches.
+
+Finally, the search only returns the first 30 results by default. If you wish to return less or more, you can specify this with `--limit <int>`/`-l <int>`.
+
 ### `gizmos.tree`
 
 The `tree` module produces a CGI tree browser for a given term contained in a SQL database.
@@ -115,11 +156,24 @@ Usage in the command line:
 python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 ```
 
+Usage in Python (with defaults for optional parameters):
+```python
+html = gizmos.tree(        # returns: HTML string
+    database,              # string: path to database
+    term_id,               # string: term ID to show or None
+    href="?id={curie}",    # string: format for hrefs
+    title=None,            # string: title to display
+    predicate_ids=None,    # list: IDs of predicates to include
+    include_search=False,  # boolean: if True, include search bar
+    standalone=True        # boolean: if False, do not include HTML headers
+)
+```
+
 The `term` should be a CURIE with a prefix already defined in the `prefix` table of the database. If the `term` is not included, the output will show a tree starting at `owl:Thing`.
 
 This can be useful when writing scripts that return trees from different databases.
 
-If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
+If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of [`gizmos.search`](#gizmos.search). The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
 
 The title displayed in the HTML output is the database file name. If you'd like to override this, you can use the `-t <title>`/`--title <title>` option. This is full HTML page. If you just want the content without `<html>` and `<body>` tags, include `-c`/`--content-only`.
 
