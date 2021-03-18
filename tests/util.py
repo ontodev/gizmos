@@ -4,13 +4,22 @@ import os
 import psycopg2
 import pytest
 import sqlite3
+import sys
 
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from rdflib.compare import to_isomorphic, graph_diff
 
-
-test_conn = "dbname=gizmos_test user=postgres password=password"
 test_db = "build/obi.db"
+
+POSTGRES_USER = os.environ.get("POSTGRES_USER")
+POSTGRES_PW = os.environ.get("POSTGRES_PW")
+if not POSTGRES_USER:
+    logging.error("Missing POSTGRES_USER environment variable")
+    sys.exit(1)
+if not POSTGRES_PW:
+    logging.error("Missing POSTGRES_PW environment variable")
+    sys.exit(1)
+test_conn = f"dbname=gizmos_test user={POSTGRES_USER} password={POSTGRES_PW}"
 
 
 def dump_ttl_sorted(graph):
@@ -75,7 +84,7 @@ def create_db(conn):
 
 @pytest.fixture
 def create_postgresql_db():
-    with psycopg2.connect("user=postgres password=password") as conn:
+    with psycopg2.connect(f"user={POSTGRES_USER} password={POSTGRES_PW}") as conn:
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         cur = conn.cursor()
         cur.execute("SELECT datname FROM pg_database WHERE datname = 'gizmos_test';")
