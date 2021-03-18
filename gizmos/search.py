@@ -151,7 +151,7 @@ def get_names(db_path, text, limit, label="rdfs:label", short_label=None, synony
 
         if not term_short_label:
             # Short label did not match text, retrieve it to display
-            if short_label.lower() == "id":
+            if short_label and short_label.lower() == "id":
                 if term_id.startswith("<") and term_id.endswith(">"):
                     term_short_label = term_id[1:-1]
                 else:
