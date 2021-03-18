@@ -71,15 +71,16 @@ def extract(args):
             conn, terms, predicates, fmt=args.format, no_hierarchy=args.no_hierarchy
         )
     finally:
-        cur = conn.cursor()
-        clean(cur)
+        clean(conn)
 
 
-def clean(cur):
+def clean(conn):
+    cur = conn.cursor()
     cur.execute("DROP TABLE IF EXISTS tmp_labels")
     cur.execute("DROP TABLE IF EXISTS tmp_terms")
     cur.execute("DROP TABLE IF EXISTS tmp_predicates")
     cur.execute("DROP TABLE IF EXISTS tmp_extract")
+    conn.commit()
 
 
 def escape(curie):
@@ -116,7 +117,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     cur = conn.cursor()
 
     # Pre-clean up
-    clean(cur)
+    clean(conn)
 
     # Create a temp labels table
     add_labels(cur)

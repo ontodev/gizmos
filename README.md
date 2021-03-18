@@ -11,9 +11,52 @@ python3 setup.py pytest
 
 There are some dependencies that are test-only (e.g., will not be listed in the project requirements). If you try and run `pytest` alone, it may fail due to missing dependencies.
 
+### Databases
+
+Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. RDFTab creates SQLite databases, but we also support PostgreSQL. The database is specified by `-d`/`--database`. 
+
+When loading from a SQLite database, use the path to the database (`foo.db`). When loading a PostgreSQL database, use a path to a configuration file ending in `.ini` (e.g., `conf.ini`) with a `[postgresql]` section. We recommend that the configuration file contain at least `database`, `user`, and `password` fields. An example configuration file with all optional fields looks like:
+```
+[postgresql]
+host = 127.0.0.1
+database = my_ontology
+user = postgres
+password = secret_password
+port = 5432
+```
+
+The following prefixes are required to be defined in the `prefix` table for the `gizmos` commands to work:
+* `owl`: `http://www.w3.org/2002/07/owl#`
+* `rdf`: `http://www.w3.org/1999/02/22-rdf-syntax-ns#`
+* `rdfs`: `http://www.w3.org/2000/01/rdf-schema#`
+
+After loading the OWL into the database, we highly recommend creating an index on the `stanza` column to speed up operations. Other indexes are optional.
+```
+sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
+```
+
+When using `gizmos` as a Python module, all operations accept a database connection object. For details on the Connection, see [Python Database API Connection Objects](https://www.python.org/dev/peps/pep-0249/#connection-objects). We support [sqlite3](https://docs.python.org/3/library/sqlite3.html) and [psycopg2](https://pypi.org/project/psycopg2/) (PostgreSQL). Using other connection objects may result in unanticipated errors due to slight variations in syntax.
+
 ## Modules
 
-Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
+### `gizmos.check`
+
+The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `gizmos.check` before using the other commands.
+```
+python3 -m gizmos.check [path-to-database]
+```
+
+This command will check that both the `prefix` and `statements` tables exist with valid columns as defined by [rdftab](https://github.com/ontodev/rdftab.rs). If those tables are valid, it checks the contents of `prefix` and `statements` to make sure that:
+* required prefixes are defined (see [Databases](#databases))
+* all CURIEs use valid prefixes
+* `stanza` is never a blank node
+* `stanza`, `subject`, and `predicate` are never `NULL`
+
+`check` will also warn on the following:
+* missing index on `stanza` column
+* full IRIs that use a base defined in `prefix`
+
+All errors are logged, and if errors are found, the command will exit with status code `1`. Only the first 10 messages about specific rows in the `statements` table are logged to save time. If you wish to override this, use the `--limit <int>`/`-l <int>` option. To print all messages, include `--limit none`.
 
 ### `gizmos.export`
 
@@ -75,6 +118,47 @@ The output contains the specified term and all its ancestors up to `owl:Thing`. 
 
 You may also specify which predicates you would like to include with `-p <term>`/`--predicate <term>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs or labels. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
 
+### `gizmos.search`
+
+The `search` module returns a list of JSON objects for use with the tree browser search bar.
+
+Usage in the command line:
+```
+python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
+```
+
+Usage in Python (with defaults for optional parameters):
+```python
+json = gizmos.search(     # returns: JSON string
+    database_connection,  # Connection: database connection object
+    search_text,          # string: text to search
+    label="rdfs:label",   # string: term ID for label
+    short_label=None,     # string: term ID for short label
+    synonyms=None,        # list: term IDs for synonyms
+    limit=30              # int: max results to return
+)
+```
+
+Each returned object has the following attributes:
+* `id`: The term ID
+* `label`: The term `rdfs:label` (or other property if specified)
+* `short_label`: The term's short label property value, if provided
+* `synonym`: The term's synonym property value, if provided
+* `property`: The term ID of the matched property (e.g., `rdfs:label`)
+* `order`: The order in which the term will appear in the search results, from shortest to longest match
+
+By default, the label will use the `rdfs:label` property. You can override this with `--label <term>`/`-L <term>`.
+
+A short label is only included if you include a property with `--short-label <term>`/`-S <term>`. To set the short label to the term's ID, use `--short-label ID`. The same goes for synonyms, which are only included if `--synonym`/`-s <term>` is specified. You may include more than one synonym property with multiple `-s` options. Synonyms are only shown in the search result if they match the search text, whereas a short label is always shown (if the term has one).
+
+When both short label and synonym(s) are provided and the matching term has both properties, the search result is shown as:
+
+> short label - label - synonym
+
+Search is run over all three properties, so even if a term's label does not match the text, it may still be returned if the synonym matches.
+
+Finally, the search only returns the first 30 results by default. If you wish to return less or more, you can specify this with `--limit <int>`/`-l <int>`.
+
 ### `gizmos.tree`
 
 The `tree` module produces a CGI tree browser for a given term contained in a SQL database.
@@ -84,11 +168,24 @@ Usage in the command line:
 python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 ```
 
+Usage in Python (with defaults for optional parameters):
+```python
+html = gizmos.tree(        # returns: HTML string
+    database_connection,   # Connection: database connection object
+    term_id,               # string: term ID to show or None
+    href="?id={curie}",    # string: format for hrefs
+    title=None,            # string: title to display
+    predicate_ids=None,    # list: IDs of predicates to include
+    include_search=False,  # boolean: if True, include search bar
+    standalone=True        # boolean: if False, do not include HTML headers
+)
+```
+
 The `term` should be a CURIE with a prefix already defined in the `prefix` table of the database. If the `term` is not included, the output will show a tree starting at `owl:Thing`.
 
 This can be useful when writing scripts that return trees from different databases.
 
-If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of `gizmos.search`. The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
+If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of [`gizmos.search`](#gizmos.search). The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
 
 The title displayed in the HTML output is the database file name. If you'd like to override this, you can use the `-t <title>`/`--title <title>` option. This is full HTML page. If you just want the content without `<html>` and `<body>` tags, include `-c`/`--content-only`.
 

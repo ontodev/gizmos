@@ -95,6 +95,7 @@ def export(args):
         # Post clean-up
         cur = conn.cursor()
         cur.execute("DROP TABLE IF EXISTS tmp_labels")
+        conn.commit()
 
 
 def get_html_value(value_format, predicate_id, vo):
@@ -445,6 +446,7 @@ def export_terms(
 
     # Create a tmp labels table
     cur.execute("DROP TABLE IF EXISTS tmp_labels")
+    conn.commit()
     add_labels(cur)
 
     if terms:
