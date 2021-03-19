@@ -53,12 +53,12 @@ def export_no_predicates(conn):
 
 
 def test_export_postgresql(create_postgresql_db):
-    with psycopg2.connect(test_conn) as conn:
+    with psycopg2.connect(**test_conn) as conn:
         export(conn)
 
 
 def test_export_no_predicates_postgresql(create_postgresql_db):
-    with psycopg2.connect(test_conn) as conn:
+    with psycopg2.connect(**test_conn) as conn:
         export(conn)
 
 

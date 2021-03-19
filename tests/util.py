@@ -11,15 +11,11 @@ from rdflib.compare import to_isomorphic, graph_diff
 
 test_db = "build/obi.db"
 
-POSTGRES_USER = os.environ.get("POSTGRES_USER")
-POSTGRES_PW = os.environ.get("POSTGRES_PW")
-if not POSTGRES_USER:
-    logging.error("Missing POSTGRES_USER environment variable")
-    sys.exit(1)
-if not POSTGRES_PW:
-    logging.error("Missing POSTGRES_PW environment variable")
-    sys.exit(1)
-test_conn = f"dbname=gizmos_test user={POSTGRES_USER} password={POSTGRES_PW}"
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
+POSTGRES_PW = os.environ.get("POSTGRES_PW", "postgres")
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
+test_conn = {"host": POSTGRES_HOST, "database": "gizmos_test", "user": POSTGRES_USER, "password": POSTGRES_PW, "port": POSTGRES_PORT}
 
 
 def dump_ttl_sorted(graph):
@@ -84,14 +80,14 @@ def create_db(conn):
 
 @pytest.fixture
 def create_postgresql_db():
-    with psycopg2.connect(f"user={POSTGRES_USER} password={POSTGRES_PW}") as conn:
+    with psycopg2.connect(host=POSTGRES_HOST, user=POSTGRES_USER, password=POSTGRES_PW, port=POSTGRES_PORT) as conn:
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         cur = conn.cursor()
         cur.execute("SELECT datname FROM pg_database WHERE datname = 'gizmos_test';")
         res = cur.fetchone()
         if not res:
             cur.execute("CREATE DATABASE gizmos_test")
-    with psycopg2.connect(test_conn) as conn:
+    with psycopg2.connect(**test_conn) as conn:
         create_db(conn)
 
 

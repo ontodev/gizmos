@@ -19,7 +19,7 @@ def extract(conn):
 
 
 def test_extract_postgresql(create_postgresql_db):
-    with psycopg2.connect(test_conn) as conn:
+    with psycopg2.connect(**test_conn) as conn:
         extract(conn)
 
 

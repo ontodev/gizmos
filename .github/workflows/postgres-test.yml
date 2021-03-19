@@ -21,20 +21,17 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install .
-      - name: Test with pytest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PW: postgres
-        run: |
-          pytest -k postgres
+      steps:
+        - uses: actions/checkout@v2
+        - name: Set up Python ${{ matrix.python-version }}
+          uses: actions/setup-python@v2
+          with:
+            python-version: ${{ matrix.python-version }}
+        - name: Install dependencies
+          run: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install .
+        - name: Test with pytest
+          run: |
+            pytest -k postgres
