@@ -30,8 +30,6 @@ def test_export(create_db):
 
 def test_export_no_predicates(create_db):
     tsv = export_terms(test_db, ["OBI:0100046"], None, "tsv", default_value_format="CURIE")
-    with open("test.tsv", "w") as f:
-        f.write(tsv)
     actual_lines = tsv.split("\n")
     actual_lines = [x.strip() for x in actual_lines]
 
