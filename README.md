@@ -13,7 +13,17 @@ There are some dependencies that are test-only (e.g., will not be listed in the 
 
 ### Databases
 
-Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. All SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. The database is specified by `-d`/`--database`.
+Each `gizmos` module uses a SQL database version of an RDF or OWL ontology to create outputs. SQL database inputs should be created from OWL using [rdftab](https://github.com/ontodev/rdftab.rs) to ensure they are in the right format. RDFTab creates SQLite databases, but we also support PostgreSQL. The database is specified by `-d`/`--database`. 
+
+When loading from a SQLite database, use the path to the database (`foo.db`). When loading a PostgreSQL database, use a path to a configuration file ending in `.ini` (e.g., `conf.ini`) with a `[postgresql]` section. We recommend that the configuration file contain at least `database`, `user`, and `password` fields. An example configuration file with all optional fields looks like:
+```
+[postgresql]
+host = 127.0.0.1
+database = my_ontology
+user = postgres
+password = secret_password
+port = 5432
+```
 
 The following prefixes are required to be defined in the `prefix` table for the `gizmos` commands to work:
 * `owl`: `http://www.w3.org/2002/07/owl#`
@@ -24,6 +34,8 @@ After loading the OWL into the database, we highly recommend creating an index o
 ```
 sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
 ```
+
+When using `gizmos` as a Python module, all operations accept a database connection object. For details on the Connection, see [Python Database API Connection Objects](https://www.python.org/dev/peps/pep-0249/#connection-objects). We support [sqlite3](https://docs.python.org/3/library/sqlite3.html) and [psycopg2](https://pypi.org/project/psycopg2/) (PostgreSQL). Using other connection objects may result in unanticipated errors due to slight variations in syntax.
 
 ## Modules
 
@@ -117,13 +129,13 @@ python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
 
 Usage in Python (with defaults for optional parameters):
 ```python
-json = gizmos.search(    # returns: JSON string
-    database,            # string: path to database
-    search_text,         # string: text to search
-    label="rdfs:label",  # string: term ID for label
-    short_label=None,    # string: term ID for short label
-    synonyms=None,       # list: term IDs for synonyms
-    limit=30             # int: max results to return
+json = gizmos.search(     # returns: JSON string
+    database_connection,  # Connection: database connection object
+    search_text,          # string: text to search
+    label="rdfs:label",   # string: term ID for label
+    short_label=None,     # string: term ID for short label
+    synonyms=None,        # list: term IDs for synonyms
+    limit=30              # int: max results to return
 )
 ```
 
@@ -159,7 +171,7 @@ python3 -m gizmos.tree [path-to-database] [term] > [output-html]
 Usage in Python (with defaults for optional parameters):
 ```python
 html = gizmos.tree(        # returns: HTML string
-    database,              # string: path to database
+    database_connection,   # Connection: database connection object
     term_id,               # string: term ID to show or None
     href="?id={curie}",    # string: format for hrefs
     title=None,            # string: title to display

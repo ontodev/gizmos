@@ -1,8 +1,68 @@
 import logging
+import psycopg2
 import sqlite3
 import sys
 
 from argparse import ArgumentParser
+from .helpers import get_connection
+
+
+def main():
+    p = ArgumentParser()
+    p.add_argument("db", help="Database file (.db) or configuration (.ini)")
+    p.add_argument("-l", "--limit", help="Max number of messages to log about rows", default="10")
+    args = p.parse_args()
+
+    # Set up logger
+    logger = logging.getLogger()
+    ch = logging.StreamHandler()
+    formatter = logging.Formatter("%(levelname)s: %(message)s")
+    ch.setFormatter(formatter)
+    logger.setLevel(logging.WARNING)
+    ch.setLevel(logging.WARNING)
+    logger.addHandler(ch)
+
+    # Parse limit
+    lim = args.limit
+    try:
+        limit = int(lim)
+    except ValueError:
+        if lim.lower() == "none":
+            limit = None
+        else:
+            logger.error("Invalid --limit option: " + lim)
+            sys.exit(1)
+
+    conn = get_connection(args.db)
+    check(conn, limit=limit)
+
+
+def check(conn, limit=10):
+    logger = logging.getLogger()
+    cur = conn.cursor()
+    if isinstance(conn, sqlite3.Connection):
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    else:
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        )
+    tables = [x[0] for x in cur.fetchall()]
+
+    if "prefix" not in tables:
+        logger.error("missing 'prefix' table")
+        prefix_ok = False
+    else:
+        prefix_ok = check_prefix(cur)
+
+    statements_ok = True
+    if "statements" not in tables:
+        logger.error("missing 'statements' table")
+        statements_ok = False
+    elif prefix_ok:
+        statements_ok = check_statements(cur, limit=limit)
+
+    if not statements_ok or not prefix_ok:
+        sys.exit(1)
 
 
 def check_prefix(cur):
@@ -10,8 +70,11 @@ def check_prefix(cur):
     logger = logging.getLogger()
 
     # Check for required columns
-    cur.execute("PRAGMA table_info(prefix)")
-    columns = {x[1]: x[2] for x in cur.fetchall()}
+    if isinstance(cur, sqlite3.Cursor):
+        cur.execute("PRAGMA table_info(prefix)")
+        columns = {x[1]: x[2] for x in cur.fetchall()}
+    else:
+        columns = get_postgres_columns(cur, "prefix")
     missing = []
     bad_type = []
     for col in ["prefix", "base"]:
@@ -30,7 +93,7 @@ def check_prefix(cur):
     # Check for required prefixes
     missing_prefixes = []
     for prefix in ["owl", "rdf", "rdfs"]:
-        cur.execute("SELECT * FROM prefix WHERE prefix = ?", (prefix,))
+        cur.execute(f"SELECT * FROM prefix WHERE prefix = '{prefix}'")
         res = cur.fetchone()
         if not res:
             missing_prefixes.append(prefix)
@@ -46,8 +109,11 @@ def check_statements(cur, limit=10):
     statements_ok = True
 
     # First check the structure
-    cur.execute("PRAGMA table_info(statements)")
-    columns = {x[1]: x[2] for x in cur.fetchall()}
+    if isinstance(cur, sqlite3.Cursor):
+        cur.execute("PRAGMA table_info(statements)")
+        columns = {x[1]: x[2] for x in cur.fetchall()}
+    else:
+        columns = get_postgres_columns(cur, "statements")
     missing = []
     bad_type = []
     for col in [
@@ -73,14 +139,31 @@ def check_statements(cur, limit=10):
 
     # Check for an index on the stanza column, warn if missing (do not fail)
     has_stanza_idx = False
-    cur.execute("PRAGMA index_list(statements)")
-    for row in cur.fetchall():
-        index = row[1]
-        cur.execute(f"PRAGMA index_info({index})")
-        col = cur.fetchone()[2]
-        if col == "stanza":
-            has_stanza_idx = True
-            break
+    if isinstance(cur, sqlite3.Cursor):
+        cur.execute("PRAGMA index_list(statements)")
+        for row in cur.fetchall():
+            index = row[1]
+            cur.execute(f"PRAGMA index_info({index})")
+            col = cur.fetchone()[2]
+            if col == "stanza":
+                has_stanza_idx = True
+                break
+    else:
+        cur.execute(
+            """SELECT a.attname AS column_name
+               FROM pg_class t, pg_class i, pg_index ix, pg_attribute a
+               WHERE
+                t.oid = ix.indrelid
+                and i.oid = ix.indexrelid
+                and a.attrelid = t.oid
+                and a.attnum = ANY(ix.indkey)
+                and t.relkind = 'r'
+                and t.relname = 'statements';"""
+        )
+        for row in cur.fetchall():
+            if row[0] == "stanza":
+                has_stanza_idx = True
+                break
     if not has_stanza_idx:
         logger.warning("missing index on 'stanza' column")
 
@@ -131,51 +214,20 @@ def check_statements(cur, limit=10):
     return statements_ok
 
 
-def main():
-    p = ArgumentParser()
-    p.add_argument("db", help="Path to SQLite database to check")
-    p.add_argument("-l", "--limit", help="Max number of messages to log about rows", default="10")
-    args = p.parse_args()
-
-    # Set up logger
-    logger = logging.getLogger()
-    ch = logging.StreamHandler()
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
-    ch.setFormatter(formatter)
-    logger.setLevel(logging.WARNING)
-    ch.setLevel(logging.WARNING)
-    logger.addHandler(ch)
-
-    # Parse limit
-    lim = args.limit
-    try:
-        limit = int(lim)
-    except ValueError:
-        if lim.lower() == "none":
-            limit = None
+def get_postgres_columns(cur, table):
+    """Get a dictionary of column name to its type from a PostgreSQL database."""
+    cur.execute(f"SELECT * FROM {table} LIMIT 0")
+    columns = {}
+    for desc in cur.description:
+        type_oid = desc[1]
+        cur.execute(f"SELECT typname FROM pg_type WHERE oid = {type_oid}")
+        res = cur.fetchone()
+        if res:
+            typename = res[0].upper()
         else:
-            logger.error("Invalid --limit option: " + lim)
-            sys.exit(1)
-
-    with sqlite3.connect(args.db) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = [x[0] for x in cur.fetchall()]
-
-        if "prefix" not in tables:
-            logger.error("missing 'prefix' table")
-            prefix_ok = False
-        else:
-            prefix_ok = check_prefix(cur)
-
-        if "statements" not in tables:
-            logger.error("missing 'statements' table")
-            statements_ok = False
-        elif prefix_ok:
-            statements_ok = check_statements(cur, limit=limit)
-
-    if not statements_ok or not prefix_ok:
-        sys.exit(1)
+            typename = None
+        columns[desc[0]] = typename
+    return columns
 
 
 if __name__ == "__main__":

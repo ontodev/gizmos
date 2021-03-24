@@ -1,22 +1,45 @@
 import logging
+import psycopg2
 import re
+import sqlite3
+
+from configparser import ConfigParser
 
 
 def add_labels(cur):
     """Create a temporary labels table. If a term does not have a label, the label is the ID."""
     # Create a tmp labels table
-    cur.execute("CREATE TABLE tmp.labels(term TEXT PRIMARY KEY, label TEXT)")
-
-    # Add all terms with label
-    cur.execute(
-        """INSERT OR IGNORE INTO tmp.labels SELECT subject, value
-           FROM statements WHERE predicate = 'rdfs:label'"""
-    )
-    # Update remaining with their ID as their label
-    cur.execute("INSERT OR IGNORE INTO tmp.labels SELECT DISTINCT subject, subject FROM statements")
-    cur.execute(
-        "INSERT OR IGNORE INTO tmp.labels SELECT DISTINCT predicate, predicate FROM statements"
-    )
+    cur.execute("CREATE TABLE tmp_labels(term TEXT PRIMARY KEY, label TEXT)")
+    if isinstance(cur, sqlite3.Cursor):
+        # Add all terms with label
+        cur.execute(
+            """INSERT OR IGNORE INTO tmp_labels SELECT subject, value
+               FROM statements WHERE predicate = 'rdfs:label'"""
+        )
+        # Update remaining with their ID as their label
+        cur.execute(
+            "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT subject, subject FROM statements"
+        )
+        cur.execute(
+            "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT predicate, predicate FROM statements"
+        )
+    else:
+        # Do the same for a psycopg2 Cursor
+        cur.execute(
+            """INSERT INTO tmp_labels
+               SELECT subject, value FROM statements WHERE predicate = 'rdfs:label'
+               ON CONFLICT (term) DO NOTHING"""
+        )
+        cur.execute(
+            """INSERT INTO tmp_labels
+               SELECT DISTINCT subject, subject FROM statements
+               ON CONFLICT (term) DO NOTHING"""
+        )
+        cur.execute(
+            """INSERT INTO tmp_labels
+               SELECT DISTINCT predicate, predicate FROM statements
+               ON CONFLICT (term) DO NOTHING"""
+        )
 
 
 def dict_factory(cursor, row):
@@ -26,17 +49,44 @@ def dict_factory(cursor, row):
     return d
 
 
+def get_connection(file):
+    """Given a file ending in .db or .ini, create a database connection."""
+    if file.endswith(".db"):
+        # Always SQLite
+        logging.info("Initializing SQLite connection")
+        return sqlite3.connect(file)
+    elif file.endswith(".ini"):
+        # Always PostgreSQL (for now)
+        config_parser = ConfigParser()
+        config_parser.read(file)
+        if config_parser.has_section("postgresql"):
+            params = {}
+            for param in config_parser.items("postgresql"):
+                params[param[0]] = param[1]
+        else:
+            logging.error(
+                "Unable to create database connection; missing [postgresql] section from " + file
+            )
+            return None
+        logging.info("Initializing PostgreSQL connection")
+        return psycopg2.connect(**params)
+    logging.error(
+        "Either a database file or a config file must be specified with a .db or .ini extension"
+    )
+    return None
+
+
 def get_ids(cur, id_or_labels):
     """Create a list of IDs from a list of IDs or labels."""
     ids = []
     for id_or_label in id_or_labels:
-        cur.execute(f"SELECT term FROM labels WHERE label = '{id_or_label}'")
+        cur.execute(f"SELECT term FROM tmp_labels WHERE label = '{id_or_label}'")
         res = cur.fetchone()
         if res:
-            ids.append(res["term"])
+            ids.append(res[0])
         else:
             # Make sure this exists as an ID
-            cur.execute(f"SELECT label FROM labels WHERE term = '{id_or_label}'")
+            cur.execute(f"SELECT label FROM tmp_labels WHERE term = '{id_or_label}'")
             res = cur.fetchone()
             if res:
                 ids.append(id_or_label)
