@@ -248,6 +248,12 @@ def quote(label):
 
 
 def ofs2omn(labels, ofs):
+    """Convert OFS to Manchester (OMN) with labels.
+    From
+        ["ObjectSomeValuesFrom", "ex:part-of", "ex:bar"]
+    to
+        'part of' some Bar
+    """
     first = ofs[0]
     if first == "ObjectSomeValuesFrom":
         onProperty = quote(labels.get(ofs[1], ofs[1]))
