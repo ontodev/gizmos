@@ -7,7 +7,9 @@ from util import test_conn, test_db, create_postgresql_db, create_sqlite_db, com
 
 
 def extract(conn):
-    ttl = extract_terms(conn, {"OBI:0100046": {"Related": "ancestors"}}, ["rdfs:label", "IAO:0010000"])
+    ttl = extract_terms(
+        conn, {"OBI:0100046": {"Related": "ancestors"}}, ["rdfs:label", "IAO:0010000"]
+    )
 
     actual = Graph()
     actual.parse(data=ttl, format="turtle")

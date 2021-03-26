@@ -4,7 +4,19 @@ import sqlite3
 import sys
 
 from argparse import ArgumentParser
-from .helpers import add_labels, escape_qnames, get_ancestors, get_children, get_connection, get_descendants, get_ids, get_parents, get_terms, get_ttl, ttl_to_json
+from .helpers import (
+    add_labels,
+    escape_qnames,
+    get_ancestors,
+    get_children,
+    get_connection,
+    get_descendants,
+    get_ids,
+    get_parents,
+    get_terms,
+    get_ttl,
+    ttl_to_json,
+)
 
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
@@ -125,19 +137,20 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
         related = details.get("Related")
         if not related:
             continue
-        related = related.strip().lower()
-        if related == "ancestors":
-            more_terms.update(get_ancestors(cur, term_id))
-        elif related == "children":
-            more_terms.update(get_children(cur, term_id))
-        elif related == "descendants":
-            more_terms.update(get_descendants(cur, term_id))
-        elif related == "parents":
-            more_terms.update(get_parents(cur, term_id))
-        else:
-            # TODO: should this just warn and continue?
-            logging.error(f"unknown 'Related' keyword for '{term_id}': " + related)
-            sys.exit(1)
+        related = related.strip().lower().split(" ")
+        for r in related:
+            if r == "ancestors":
+                more_terms.update(get_ancestors(cur, term_id))
+            elif r == "children":
+                more_terms.update(get_children(cur, term_id))
+            elif r == "descendants":
+                more_terms.update(get_descendants(cur, term_id))
+            elif r == "parents":
+                more_terms.update(get_parents(cur, term_id))
+            else:
+                # TODO: should this just warn and continue?
+                logging.error(f"unknown 'Related' keyword for '{term_id}': " + r)
+                sys.exit(1)
 
     # Add those extra terms to our terms dict
     for mt in more_terms:
@@ -189,9 +202,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
             override_parent = details.get("Parent ID")
             if override_parent:
                 # Just assert this as parent and don't worry about existing parent(s)
-                cur.execute(
-                    f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')"
-                )
+                cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')")
             else:
                 # Get the parent(s) from statements and see which are in our input terms
                 parents = get_parents(cur, term_id)
@@ -199,9 +210,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
                 if included_parents:
                     # Maintain these relationships in the import module
                     for ip in included_parents:
-                        cur.execute(
-                            f"INSERT INTO tmp_terms VALUES ('{term_id}', '{ip}')"
-                        )
+                        cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{ip}')")
 
     cur.execute(
         """CREATE TABLE tmp_extract(
