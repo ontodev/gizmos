@@ -8,8 +8,8 @@ from util import test_conn, test_db, create_postgresql_db, create_sqlite_db, com
 def get_diff(actual_lines, expected_lines):
     removed = list(set(expected_lines) - set(actual_lines))
     added = list(set(actual_lines) - set(expected_lines))
-    removed = [f"---\t{x}" for x in removed if x != '']
-    added = [f"+++\t{x}" for x in added if x != '']
+    removed = [f"---\t{x}" for x in removed if x != ""]
+    added = [f"+++\t{x}" for x in added if x != ""]
     return removed + added
 
 
