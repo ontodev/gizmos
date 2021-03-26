@@ -107,7 +107,7 @@ If you have many predicates to include, you can use `-P <file>`/`--predicates <f
 
 The `extract` module creates a TTL or JSON-LD file containing the term, predicates, and ancestors written to stdout.
 ```
-python3 extract.py -d [path-to-database] -t [term] > [output-ttl]
+python3 gizmos.extract -d [path-to-database] -t [term] > [output-ttl]
 ```
 
 For JSON-LD, you must include `-f JSON-LD`/`--format JSON-LD`.
@@ -117,6 +117,34 @@ The term or terms as CURIEs or labels are specified with `-t <term>`/`--term <te
 The output contains the specified term and all its ancestors up to `owl:Thing`. If you don't wish to include the ancestors of the term/terms, include the `-n`/`--no-hierarchy` flag.
 
 You may also specify which predicates you would like to include with `-p <term>`/`--predicate <term>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs or labels. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
+
+#### Creating Import Modules
+
+`gizmos.extract` can also be used with import configuration files (`-i <file>`/`--imports <file>`):
+
+```
+python3 -m gizmos.extract -d [path-to-database] -i [path-to-import-config] > [output-ttl]
+```
+
+These files contain the terms you wish to include in your import module, along with some other details. The required headers are:
+* **ID**: The term ID to include
+* **Label**: optional; the term's label for documentation
+* **Parent ID**: optional; a term ID of a parent to assert
+* **Parent Label**: optional; the parent's label for documentation
+* **Related**: optional; related entities to include
+* **Source**: optional; a short ontology ID that specifies the source
+
+Including the source can be useful when you have one file that you are using to create more than one import module. When you specify the **Source** column, you can use the `-s <source>`/`--source <source>` option in the command line. For example, if one of the sources in your import config is `obi`:
+
+```
+python3 -m gizmos.extract -d obi.db -i config.tsv -s obi > out.ttl
+```
+
+The **Related** column should be a space-separated list that can use zero or more of the following. When included, all terms that match the relationship from the input database will be included in the output:
+* `ancestors`
+* `children`
+* `descendants`
+* `parents`
 
 ### `gizmos.search`
 

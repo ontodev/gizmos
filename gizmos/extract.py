@@ -1,11 +1,10 @@
+import csv
 import logging
-import re
 import sqlite3
 import sys
 
 from argparse import ArgumentParser
-from rdflib import Graph
-from .helpers import add_labels, get_connection, get_ids, get_terms
+from .helpers import add_labels, escape_qnames, get_ancestors, get_children, get_connection, get_descendants, get_ids, get_parents, get_terms, get_ttl, ttl_to_json
 
 """
 Usage: python3 extract.py -d <sqlite-database> -t <curie> > <ttl-file>
@@ -45,7 +44,9 @@ def main():
     p.add_argument(
         "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
-    p.add_argument("-f", "--format", help="", default="ttl")
+    p.add_argument("-i", "--imports", help="TSV or CSV file containing import module details")
+    p.add_argument("-s", "--source", help="Ontology source to filter imports file")
+    p.add_argument("-f", "--format", help="Output format (ttl or json)", default="ttl")
     p.add_argument(
         "-n",
         "--no-hierarchy",
@@ -58,10 +59,20 @@ def main():
 
 def extract(args):
     # Get required terms
-    terms = get_terms(args.term, args.terms)
-    if not terms:
-        logging.critical("One or more term(s) must be specified with --term or --terms")
+    terms_list = get_terms(args.term, args.terms)
+    terms = {}
+    if args.imports:
+        terms = get_import_terms(args.imports, source=args.source)
+
+    if not terms_list and not terms:
+        logging.critical("One or more term(s) must be specified with --term, --terms, or --imports")
         sys.exit(1)
+
+    for t in terms_list:
+        if not args.no_hierarchy:
+            terms[t] = {"Related": "ancestors"}
+        else:
+            terms[t] = {}
 
     # Maybe get predicates to include
     predicates = get_terms(args.predicate, args.predicates)
@@ -83,30 +94,6 @@ def clean(conn):
     conn.commit()
 
 
-def escape(curie):
-    """Escape illegal characters in the local ID portion of a CURIE"""
-    prefix = curie.split(":")[0]
-    local_id = curie.split(":")[1]
-    local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
-    return f"{prefix}:{local_id_fixed}"
-
-
-def escape_qnames(cur):
-    """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
-    for keyword in ["stanza", "subject", "predicate", "object"]:
-        cur.execute(
-            f"""SELECT DISTINCT {keyword} FROM tmp_extract
-                WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%'"""
-        )
-        for row in cur.fetchall():
-            curie = row[0]
-            escaped = escape(curie)
-            if curie != escaped:
-                cur.execute(
-                    f"UPDATE tmp_extract SET {keyword} = '{escaped}' WHERE {keyword} = '{curie}'"
-                )
-
-
 def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
@@ -122,7 +109,42 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     # Create a temp labels table
     add_labels(cur)
 
-    term_ids = get_ids(cur, terms)
+    # First pass, get all related entities
+    ignore = []
+    more_terms = set()
+    for term_id, details in terms.items():
+        # Confirm that this term exists
+        cur.execute(f"SELECT * FROM statements WHERE stanza = '{term_id}' LIMIT 1")
+        res = cur.fetchone()
+        if not res:
+            logging.warning(f"'{term_id}' does not exist in database")
+            ignore.append(term_id)
+            continue
+
+        # Check for related entities
+        related = details.get("Related")
+        if not related:
+            continue
+        related = related.strip().lower()
+        if related == "ancestors":
+            more_terms.update(get_ancestors(cur, term_id))
+        elif related == "children":
+            more_terms.update(get_children(cur, term_id))
+        elif related == "descendants":
+            more_terms.update(get_descendants(cur, term_id))
+        elif related == "parents":
+            more_terms.update(get_parents(cur, term_id))
+        else:
+            # TODO: should this just warn and continue?
+            logging.error(f"unknown 'Related' keyword for '{term_id}': " + related)
+            sys.exit(1)
+
+    # Add those extra terms to our terms dict
+    for mt in more_terms:
+        if mt not in terms:
+            # Don't worry about the parent ID because relationship will be maintained ...
+            # ... as long as the parent is in our terms
+            terms[mt] = {}
 
     predicate_ids = None
     if predicates:
@@ -130,8 +152,8 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
         predicate_ids = get_ids(cur, predicates)
 
     # Create the terms table containing parent -> child relationships
-    cur.execute("CREATE TABLE tmp_terms(parent TEXT NOT NULL, child TEXT)")
-    for term_id in term_ids:
+    cur.execute("CREATE TABLE tmp_terms(child TEXT, parent TEXT)")
+    for term_id in terms.keys():
         cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', NULL)")
 
     # Create tmp predicates table
@@ -163,19 +185,23 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
 
     if not no_hierarchy:
         # Add subclasses & subproperties
-        cur.execute(
-            """WITH RECURSIVE ancestors(parent, child) AS (
-                SELECT * FROM tmp_terms
-                UNION
-                SELECT object AS parent, subject AS child
-                FROM statements, ancestors
-                WHERE ancestors.parent = statements.stanza
-                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                  AND statements.object NOT LIKE '_:%'
-              )
-              INSERT INTO tmp_terms
-              SELECT parent, child FROM ancestors"""
-        )
+        for term_id, details in terms.items():
+            override_parent = details.get("Parent ID")
+            if override_parent:
+                # Just assert this as parent and don't worry about existing parent(s)
+                cur.execute(
+                    f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')"
+                )
+            else:
+                # Get the parent(s) from statements and see which are in our input terms
+                parents = get_parents(cur, term_id)
+                included_parents = parents.intersection(set(terms.keys()))
+                if included_parents:
+                    # Maintain these relationships in the import module
+                    for ip in included_parents:
+                        cur.execute(
+                            f"INSERT INTO tmp_terms VALUES ('{term_id}', '{ip}')"
+                        )
 
     cur.execute(
         """CREATE TABLE tmp_extract(
@@ -193,27 +219,34 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     cur.execute(
         """INSERT INTO tmp_extract
         SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms) AND predicate = 'rdf:type'"""
+        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms) AND predicate = 'rdf:type'"""
     )
 
-    # Insert subclass statements:
-    # - parent is a class if it's used in subclass statement
-    # - this allows us to get around undeclared classes, e.g. owl:Thing
+    # Insert subproperty statements for any property types
     cur.execute(
         """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT t.child, t.child, 'rdfs:subClassOf', t.parent
-        FROM tmp_terms t
-        JOIN statements s ON t.parent = s.object
-        WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subClassOf'"""
+        SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
+        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+          (SELECT stanza FROM statements WHERE predicate = 'rdf:type'
+           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty'))"""
     )
 
-    # Insert subproperty statements (same as above)
+    # Insert subclass statements for any class types
     cur.execute(
         """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT t.child, t.child, 'rdfs:subPropertyOf', t.parent
-        FROM tmp_terms t
-        JOIN statements s ON t.parent = s.object
-        WHERE t.child IS NOT NULL AND s.predicate = 'rdfs:subPropertyOf'"""
+        SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
+        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+          (SELECT stanza FROM statements WHERE predicate = 'rdf:type' AND object = 'owl:Class')"""
+    )
+
+    # Everything else is an instance
+    # TODO: or datatype?
+    cur.execute(
+        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
+        SELECT DISTINCT child, child, 'rdf:type', parent
+        FROM tmp_terms WHERE parent IS NOT NULL AND child NOT IN
+          (SELECT stanza from tmp_extract
+           WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf'))"""
     )
 
     # Insert literal annotations
@@ -221,7 +254,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
         """INSERT INTO tmp_extract
         SELECT *
         FROM statements
-        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms)
+        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
           AND predicate IN (SELECT predicate FROM tmp_predicates)
           AND value IS NOT NULL"""
     )
@@ -230,9 +263,9 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     cur.execute(
         """INSERT INTO tmp_extract
         SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT parent FROM tmp_terms)
+        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
           AND predicate IN (SELECT predicate FROM tmp_predicates)
-          AND object IN (SELECT DISTINCT parent FROM tmp_terms)"""
+          AND object IN (SELECT DISTINCT child FROM tmp_terms)"""
     )
 
     # Insert IRI annotations (object does not have to be in input terms)
@@ -241,70 +274,45 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
         SELECT s1.stanza, s1.subject, s1.predicate, s1.object
         FROM statements s1
         JOIN statements s2 ON s1.predicate = s2.subject
-        WHERE s1.subject IN (SELECT DISTINCT parent FROM tmp_terms)
+        WHERE s1.subject IN (SELECT DISTINCT child FROM tmp_terms)
           AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
           AND s2.object = 'owl:AnnotationProperty'
           AND s1.object IS NOT NULL"""
     )
 
     # Escape QNames
-    escape_qnames(cur)
+    escape_qnames(cur, "tmp_extract")
 
-    ttl = "\n".join(get_ttl(cur))
+    ttl = get_ttl(cur, "tmp_extract")
     if fmt.lower() == "ttl":
         return ttl
 
     # Otherwise the format is JSON
-    graph = Graph()
-    graph.parse(data=ttl, format="turtle")
-
-    # Create the context with prefixes
-    cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
-    context = {}
-    for row in cur.fetchall():
-        context[row[0]] = {"@id": row[1], "@type": "@id"}
-    return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")
+    return ttl_to_json(cur, ttl)
 
 
-def get_ttl(cur):
-    """Get the 'extract' table as lines of Turtle (the lines are returned as a list)."""
-    # Get ttl lines
-    cur.execute(
-        """WITH literal(value, escaped) AS (
-              SELECT DISTINCT
-                value,
-                replace(replace(replace(value, '\\', '\\\\'), '"', '\\"'), '
-            ', '\\n') AS escaped
-              FROM tmp_extract
-            )
-            SELECT
-              '@prefix ' || prefix || ': <' || base || '> .'
-            FROM prefix
-            UNION ALL
-            SELECT DISTINCT
-               subject
-            || ' '
-            || predicate
-            || ' '
-            || coalesce(
-                 object,
-                 '"' || escaped || '"^^' || datatype,
-                 '"' || escaped || '"@' || language,
-                 '"' || escaped || '"'
-               )
-            || ' .'
-            FROM tmp_extract LEFT JOIN literal ON tmp_extract.value = literal.value;"""
-    )
-    lines = []
-    for row in cur.fetchall():
-        line = row[0]
-        if not line:
-            continue
-        # Replace newlines
-        line = line.replace("\n", "\\n")
-        lines.append(line)
+def get_import_terms(import_file, source=None):
+    """Get the terms and their details from the input file.
 
-    return lines
+    :param import_file: path to file containing import details
+    :param source: source ontology ID for terms to include
+                   (if None or if input has no 'source' column, all are included)
+    """
+    terms = {}
+    sep = "\t"
+    if import_file.endswith(".csv"):
+        sep = "\t"
+    with open(import_file, "r") as f:
+        reader = csv.DictReader(f, delimiter=sep)
+        for row in reader:
+            term_id = row.get("ID")
+            if not term_id:
+                continue
+            if source and row.get("Source") != source:
+                # If we have a source and this is not from that source, skip
+                continue
+            terms[term_id] = {"Parent ID": row.get("Parent ID"), "Related": row.get("Related")}
+    return terms
 
 
 if __name__ == "__main__":
