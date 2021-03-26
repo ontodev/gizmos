@@ -1,0 +1,27 @@
+stanza	subject	predicate	object	value	datatype	language
+ex:foo	ex:foo	rdfs:label		Foo		
+ex:foo	ex:foo	rdfs:label		Fou		fr
+ex:foo	ex:foo	ex:size		123	xsd:int	
+ex:foo	ex:foo	ex:link	<https://example.com/FOO>			
+ex:foo	ex:foo	rdf:type	owl:Class			
+ex:foo	ex:foo	rdfs:subClassOf	_:b1			
+ex:foo	_:b1	rdf:type	owl:Restriction			
+ex:foo	_:b1	owl:onProperty	ex:part-of			
+ex:foo	_:b1	owl:someValuesFrom	ex:bar			
+ex:foo	ex:foo	ex:items	_:b2			
+ex:foo	_:b2	rdf:type	rdf:List			
+ex:foo	_:b2	rdf:first		A		
+ex:foo	_:b2	rdf:rest	_:b3			
+ex:foo	_:b3	rdf:type	rdf:List			
+ex:foo	_:b3	rdf:first		B		
+ex:foo	_:b3	rdf:rest	rdf:nil			
+ex:foo	_:b4	rdf:type	owl:Axiom			
+ex:foo	_:b4	owl:annotatedSource	ex:foo			
+ex:foo	_:b4	owl:annotatedProperty	ex:link			
+ex:foo	_:b4	owl:annotatedTarget	<https://example.com/FOO>			
+ex:foo	_:b4	rdfs:comment		OWL axiom annotation		en
+ex:foo	_:b5	rdf:type	rdf:Statement			
+ex:foo	_:b5	rdf:subject	ex:foo			
+ex:foo	_:b5	rdf:predicate	ex:link			
+ex:foo	_:b5	rdf:object	<https://example.com/FOO>			
+ex:foo	_:b5	rdfs:comment		RDF metadata		en
