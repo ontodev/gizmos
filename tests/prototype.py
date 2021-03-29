@@ -115,11 +115,27 @@ def thin2subjects(thin):
 
     # Handle OWL annotations and RDF reification.
     # TODO!
+    remove = set()
     for subject_id in subjects.keys():
-        if subjects[subject_id].get("owl:annotatedSubject"):
-            pass
-        if subjects[subject_id].get("owl:annotatedSubject"):
-            pass
+        if subjects[subject_id].get("owl:annotatedSource"):
+            print("OWL annotation", subject_id)
+            subject = firstObject(subjects[subject_id], "owl:annotatedSource")
+            predicate = firstObject(subjects[subject_id], "owl:annotatedProperty")
+            obj = subjects[subject_id]["owl:annotatedTarget"][0]
+            print(subject, predicate, obj)
+            del subjects[subject_id]["owl:annotatedSource"]
+            del subjects[subject_id]["owl:annotatedProperty"]
+            del subjects[subject_id]["owl:annotatedTarget"]
+            del subjects[subject_id]["rdf:type"]
+            for o in subjects[subject][predicate]:
+                if o == obj:
+                    o["annotations"] = subjects[subject_id]
+                    remove.add(subject_id)
+        if subject_id in subjects and subjects[subject_id].get("rdf:subject"):
+            print("RDF reification", subject_id)
+
+    for r in remove:
+        del subjects[r]
 
     return subjects
 
@@ -339,21 +355,21 @@ if __name__ == "__main__":
     print("List", rdf2ofs(rdfList))
 
     subjects = thin2subjects(thin)
-    #renderSubjects(subjects)
+    renderSubjects(subjects)
     #for row in subjects2thick(subjects):
     #    print(row)
-    thick = subjects2thick(subjects)
-    reasoned = thick2reasoned(thick)
-    ofs = reasoned[0]["super"]
-    labels = {
-        "ex:part-of": "part of",
-        "ex:bar": "Bar",
-    }
-    print("OFS", ofs)
-    print("OMN", ofs2omn(labels, ofs))
-    rdfa = ofs2rdfa(labels, ofs)
-    print("RDFa", rdfa)
-    print("HTML", render(prefixes, rdfa))
-    rdfa = subject2rdfa(labels, "ex:foo", subjects["ex:foo"])
+    #thick = subjects2thick(subjects)
+    #reasoned = thick2reasoned(thick)
+    #ofs = reasoned[0]["super"]
+    #labels = {
+    #    "ex:part-of": "part of",
+    #    "ex:bar": "Bar",
+    #}
+    #print("OFS", ofs)
+    #print("OMN", ofs2omn(labels, ofs))
+    #rdfa = ofs2rdfa(labels, ofs)
     #print("RDFa", rdfa)
-    print("HTML\n" + render(prefixes, rdfa))
+    #print("HTML", render(prefixes, rdfa))
+    #rdfa = subject2rdfa(labels, "ex:foo", subjects["ex:foo"])
+    ##print("RDFa", rdfa)
+    #print("HTML\n" + render(prefixes, rdfa))
