@@ -67,8 +67,37 @@ def escape_qnames(cur, table):
                 )
 
 
+def get_ancestors_capped(cur, top_terms, ancestors, term_id):
+    """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
+    or a top-level term is reached (below owl:Thing).
+
+    :param cur: database Cursor object to query
+    :param top_terms: set of top terms to stop at
+    :param ancestors: set to collect ancestors in
+    :param term_id: term ID to get the ancestors of"""
+    cur.execute(
+        f"""SELECT DISTINCT object FROM statements
+            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND object NOT LIKE '_:%'"""
+    )
+    res = cur.fetchall()
+    if not res:
+        # No parents, we've hit the very top-level
+        ancestors.add(term_id)
+        return
+    for r in res:
+        parent = r[0]
+        if parent == "owl:Thing" or (top_terms and r[0] in top_terms):
+            continue
+        ancestors.add(r[0])
+        get_ancestors_capped(cur, top_terms, ancestors, parent)
+
+
 def get_ancestors(cur, term_id):
-    """Return a set of ancestors for a given term ID."""
+    """Return a set of ancestors for a given term ID, all the way to the top-level (below owl:Thing)
+
+    :param cur: database Cursor object to query
+    :param term_id: term ID to get the ancestors of"""
     cur.execute(
         f"""WITH RECURSIVE ancestors(node) AS (
                 VALUES ('{term_id}')
@@ -87,6 +116,27 @@ def get_ancestors(cur, term_id):
             SELECT * FROM ancestors""",
     )
     return set([x[0] for x in cur.fetchall()])
+
+
+def get_bottom_descendants(cur, term_id, descendants):
+    """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
+    terms are those that are not ever used as the object of an rdfs:subClassOf statement.
+
+    :param cur: database Cursor object to query
+    :param term_id: term ID to get the bottom descendants of
+    :param descendants: a set to add descendants to
+    """
+    cur.execute(
+        f"""SELECT DISTINCT stanza FROM statements
+            WHERE object = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+    )
+    res = cur.fetchall()
+    if not res:
+        # No children - this is a bottom-level term
+        descendants.add(term_id)
+        return
+    for r in res:
+        get_bottom_descendants(cur, r[0], descendants)
 
 
 def get_children(cur, term_id):
@@ -192,6 +242,36 @@ def get_terms(term_list, terms_file):
                 else:
                     terms.append(line.strip())
     return terms
+
+
+def get_top_ancestors(cur, ancestors, term_id, top_terms=None):
+    """Get the top-level ancestor or ancestors for a given term with no intermediates. The top-level
+    terms are those with no rdfs:subClassOf statement, or direct children of owl:Thing. If top_terms
+    is included, they may also be those terms in that list.
+
+    :param cur: database Cursor object to query
+    :param ancestors: a set to add ancestors to
+    :param term_id: term ID to get the top ancestor of
+    :param top_terms: a list of top-level terms to stop at
+                      (if an ancestor is in this set, it will be added and recursion will stop)
+    """
+    cur.execute(
+        f"""SELECT DISTINCT object FROM statements
+            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND object NOT LIKE '_:%'"""
+    )
+    res = cur.fetchall()
+    if not res:
+        ancestors.add(term_id)
+        return
+    for r in res:
+        if r[0] == "owl:Thing":
+            ancestors.add(term_id)
+            break
+        if top_terms and r[0] in top_terms:
+            ancestors.add(r[0])
+        else:
+            get_top_ancestors(cur, r[0], ancestors, top_terms=top_terms)
 
 
 def get_ttl(cur, table):

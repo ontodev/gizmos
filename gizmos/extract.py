@@ -7,13 +7,15 @@ from argparse import ArgumentParser
 from .helpers import (
     add_labels,
     escape_qnames,
-    get_ancestors,
+    get_ancestors_capped,
+    get_bottom_descendants,
     get_children,
     get_connection,
     get_descendants,
     get_ids,
     get_parents,
     get_terms,
+    get_top_ancestors,
     get_ttl,
     ttl_to_json,
 )
@@ -57,6 +59,13 @@ def main():
         "-P", "--predicates", help="File containing CURIEs or labels of predicates to include",
     )
     p.add_argument("-i", "--imports", help="TSV or CSV file containing import module details")
+    p.add_argument("-c", "--config", help="Source configuration for imports")
+    p.add_argument(
+        "-I",
+        "--intermediates",
+        help="Included ancestor/descendant intermediates (default: all)",
+        default="all",
+    )
     p.add_argument("-s", "--source", help="Ontology source to filter imports file")
     p.add_argument("-f", "--format", help="Output format (ttl or json)", default="ttl")
     p.add_argument(
@@ -73,8 +82,9 @@ def extract(args):
     # Get required terms
     terms_list = get_terms(args.term, args.terms)
     terms = {}
+    source = args.source
     if args.imports:
-        terms = get_import_terms(args.imports, source=args.source)
+        terms = get_import_terms(args.imports, source=source)
 
     if not terms_list and not terms:
         logging.critical("One or more term(s) must be specified with --term, --terms, or --imports")
@@ -86,14 +96,49 @@ def extract(args):
         else:
             terms[t] = {}
 
-    # Maybe get predicates to include
     predicates = get_terms(args.predicate, args.predicates)
+    intermediates = args.intermediates
+
+    if args.config:
+        # Get options from the config file based on the source
+        if not source:
+            logging.critical("A --source is required when using the --config option")
+            sys.exit(1)
+        config_path = args.config
+        sep = "\t"
+        if config_path.endswith(".csv"):
+            sep = ","
+        # Search for the source in the file and read in option
+        found_source = False
+        with open(config_path, "r") as f:
+            reader = csv.DictReader(f, delimiter=sep)
+            for row in reader:
+                if row["Source"] == source:
+                    found_source = True
+                    intermediates = row.get("Intermediates", "all")
+                    predicates_str = row.get("Predicates")
+                    if predicates_str:
+                        # Extend any existing command-line predicates
+                        predicates.extend(predicates_str.split(" "))
+                    break
+        if not found_source:
+            # No source with provided name found
+            logging.critical(f"Source '{source}' does not exist in config file: " + config_path)
+            sys.exit(1)
+
+    # Get the database connection & extract terms
     conn = get_connection(args.database)
     try:
         return extract_terms(
-            conn, terms, predicates, fmt=args.format, no_hierarchy=args.no_hierarchy
+            conn,
+            terms,
+            predicates,
+            fmt=args.format,
+            intermediates=intermediates,
+            no_hierarchy=args.no_hierarchy,
         )
     finally:
+        # Always remove temp tables before exiting
         clean(conn)
 
 
@@ -106,10 +151,14 @@ def clean(conn):
     conn.commit()
 
 
-def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
+def extract_terms(conn, terms, predicates, fmt="ttl", intermediates="all", no_hierarchy=False):
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
         raise Exception("Unknown format: " + fmt)
+
+    intermediates = intermediates.lower()
+    if intermediates not in ["all", "none"]:
+        raise Exception("Unknown 'intermediates' option: " + intermediates)
 
     # Create a new table (extract) and copy the triples we care about
     # Then write the triples from that table to the output file
@@ -121,7 +170,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     # Create a temp labels table
     add_labels(cur)
 
-    # First pass, get all related entities
+    # First pass on terms, get all related entities
     ignore = []
     more_terms = set()
     for term_id, details in terms.items():
@@ -133,30 +182,49 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
             ignore.append(term_id)
             continue
 
-        # Check for related entities
+        # Check for related entities & add them
         related = details.get("Related")
         if not related:
             continue
         related = related.strip().lower().split(" ")
         for r in related:
             if r == "ancestors":
-                more_terms.update(get_ancestors(cur, term_id))
+                ancestors = set()
+                if intermediates == "none":
+                    # Find first ancestor/s that is/are either:
+                    # - in the set of input terms
+                    # - a top level term (below owl:Thing)
+                    get_top_ancestors(cur, ancestors, term_id, top_terms=terms.keys())
+                else:
+                    # Otherwise get a set of ancestors, stopping at terms that are either:
+                    # - in the set of input terms
+                    # - a top level term (below owl:Thing)
+                    get_ancestors_capped(cur, terms.keys(), ancestors, term_id)
+                more_terms.update(ancestors)
             elif r == "children":
+                # Just add the direct children
                 more_terms.update(get_children(cur, term_id))
             elif r == "descendants":
-                more_terms.update(get_descendants(cur, term_id))
+                if intermediates == "none":
+                    # Find all bottom-level descendants (do not have children)
+                    descendants = set()
+                    get_bottom_descendants(cur, term_id, descendants)
+                    more_terms.update(descendants)
+                else:
+                    # Get a set of all descendants, including intermediates
+                    more_terms.update(get_descendants(cur, term_id))
             elif r == "parents":
+                # Just add the direct parents
                 more_terms.update(get_parents(cur, term_id))
             else:
                 # TODO: should this just warn and continue?
-                logging.error(f"unknown 'Related' keyword for '{term_id}': " + r)
-                sys.exit(1)
+                raise Exception(f"unknown 'Related' keyword for '{term_id}': " + r)
 
-    # Add those extra terms to our terms dict
+    # Add those extra terms from related entities to our terms dict
     for mt in more_terms:
         if mt not in terms:
-            # Don't worry about the parent ID because relationship will be maintained ...
-            # ... as long as the parent is in our terms
+            # Don't worry about the parent ID because hierarchy will be maintained ...
+            # ... based on the first ancestor in the full set of terms
             terms[mt] = {}
 
     predicate_ids = None
@@ -169,7 +237,7 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
     for term_id in terms.keys():
         cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', NULL)")
 
-    # Create tmp predicates table
+    # Create tmp predicates table containing all predicates to include
     cur.execute("CREATE TABLE tmp_predicates(predicate TEXT PRIMARY KEY NOT NULL)")
     if predicate_ids:
         for predicate_id in predicate_ids:
@@ -186,32 +254,40 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
             cur.execute(
                 """INSERT OR IGNORE INTO tmp_predicates
                 SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+                FROM statements WHERE predicate NOT IN
+                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')"""
             )
         else:
             cur.execute(
                 """INSERT INTO tmp_predicates
                 SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                FROM statements WHERE predicate NOT IN
+                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')
                 ON CONFLICT (predicate) DO NOTHING"""
             )
 
-    if not no_hierarchy:
-        # Add subclasses & subproperties
-        for term_id, details in terms.items():
-            override_parent = details.get("Parent ID")
-            if override_parent:
-                # Just assert this as parent and don't worry about existing parent(s)
-                cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')")
-            else:
-                # Get the parent(s) from statements and see which are in our input terms
-                parents = get_parents(cur, term_id)
-                included_parents = parents.intersection(set(terms.keys()))
-                if included_parents:
-                    # Maintain these relationships in the import module
-                    for ip in included_parents:
-                        cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{ip}')")
+    # Add subclass/subproperty/type relationships to terms table
+    for term_id, details in terms.items():
+        # Check for overrides, regardless of no-hierarchy
+        override_parent = details.get("Parent ID")
+        if override_parent:
+            # Just assert this as parent and don't worry about existing parent(s)
+            cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')")
+            continue
+        if no_hierarchy:
+            continue
 
+        # Otherwise only add the parent if we want a hierarchy
+        # Check for the first ancestor we can find with all terms considered "top level"
+        # In many cases, this is just the direct parent
+        parents = set()
+        get_top_ancestors(cur, parents, term_id, top_terms=terms.keys())
+        if parents:
+            # Maintain these relationships in the import module
+            for p in parents:
+                cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{p}')")
+
+    # Create our extract table to hold the actual triples
     cur.execute(
         """CREATE TABLE tmp_extract(
              stanza TEXT,
@@ -224,11 +300,14 @@ def extract_terms(conn, terms, predicates, fmt="ttl", no_hierarchy=False):
            )"""
     )
 
-    # Insert rdf:type declarations
+    # Insert rdf:type declarations - only for OWL entities
     cur.execute(
         """INSERT INTO tmp_extract
         SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms) AND predicate = 'rdf:type'"""
+        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+          AND predicate = 'rdf:type'
+          AND object IN
+          ('owl:Class', 'owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty', 'owl:NamedIndividual')"""
     )
 
     # Insert subproperty statements for any property types

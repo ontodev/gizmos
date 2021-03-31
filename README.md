@@ -118,12 +118,14 @@ The output contains the specified term and all its ancestors up to `owl:Thing`. 
 
 You may also specify which predicates you would like to include with `-p <term>`/`--predicate <term>` or `-P <file>`/`--predicates <file>`, where the file contains a list of predicate CURIEs or labels. Otherwise, the output includes all predicates. Since this extracts a hierarchy, unless you include the `-n` flag, `rdfs:subClassOf` will always be included.
 
+By default, *all* intermediate terms are included between the term to extract and the highest-level term. If you don't want to include any intermediates, you can run `extract` with `--i none`/`--intermediates none`. This maintains the hierarchy between extracted terms, but removes intermediate terms that are not in the set of input terms to extract.
+
 #### Creating Import Modules
 
 `gizmos.extract` can also be used with import configuration files (`-i <file>`/`--imports <file>`):
 
 ```
-python3 -m gizmos.extract -d [path-to-database] -i [path-to-import-config] > [output-ttl]
+python3 -m gizmos.extract -d [path-to-database] -i [path-to-imports] > [output-ttl]
 ```
 
 These files contain the terms you wish to include in your import module, along with some other details. The required headers are:
@@ -137,14 +139,28 @@ These files contain the terms you wish to include in your import module, along w
 Including the source can be useful when you have one file that you are using to create more than one import module. When you specify the **Source** column, you can use the `-s <source>`/`--source <source>` option in the command line. For example, if one of the sources in your import config is `obi`:
 
 ```
-python3 -m gizmos.extract -d obi.db -i config.tsv -s obi > out.ttl
+python3 -m gizmos.extract -d obi.db -i imports.tsv -s obi > out.ttl
 ```
 
 The **Related** column should be a space-separated list that can use zero or more of the following. When included, all terms that match the relationship from the input database will be included in the output:
-* `ancestors`
-* `children`
-* `descendants`
-* `parents`
+* `ancestors`: Get all intermediate terms between the given term and it's first ancestor that is included in the input terms. If `--intermediates none`, get the first included ancestor OR the top-level ancestor if an ancestor is not included in the input terms.
+* `children`: Include the direct children of the term, regardless of if they are included in the input terms or not.
+* `descendants`: Get all intermediate terms between the given term and the lowest-level term (terms that do not have children). If `--intermediates none`, get all bottom-level terms only.
+* `parents`: Include the direct parents of the term, regardless of if they are included in the input terms or not.
+
+You can also pass a source configuration file that contains the options for each source ontology used in your imports file using `-c <file>`/`--config <file>`. Note that with this option, a `--source` is always required:
+
+```
+python3 -m gizmos.extract -d obi.db -i imports.tsv -c config.tsv -s obi > out.ttl
+```
+
+This is a TSV or CSV with the following headers:
+* **Source**: a short ontology ID that specifies the source; matches a source in the imports file
+* **IRI**: optional; the IRI of the ontology for documentation
+* **Intermediates**: optional; an `--intermediates` option: `all` or `none`
+* **Predicates**: optional; a space-separated list of predicate IDs to include from the import
+
+The config file can be useful for handling multiple imports with different options in a `Makefile`. If your imports all use the same `--intermediates` option and the same predicates, there is no need to specify a config file.
 
 ### `gizmos.search`
 
