@@ -271,7 +271,7 @@ def get_top_ancestors(cur, ancestors, term_id, top_terms=None):
         if top_terms and r[0] in top_terms:
             ancestors.add(r[0])
         else:
-            get_top_ancestors(cur, r[0], ancestors, top_terms=top_terms)
+            get_top_ancestors(cur, ancestors, r[0], top_terms=top_terms)
 
 
 def get_ttl(cur, table):

@@ -282,9 +282,12 @@ def extract_terms(conn, terms, predicates, fmt="ttl", intermediates="all", no_hi
         # In many cases, this is just the direct parent
         parents = set()
         get_top_ancestors(cur, parents, term_id, top_terms=terms.keys())
+        parents = parents.intersection(set(terms.keys()))
         if parents:
             # Maintain these relationships in the import module
             for p in parents:
+                if p == term_id:
+                    continue
                 cur.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{p}')")
 
     # Create our extract table to hold the actual triples
