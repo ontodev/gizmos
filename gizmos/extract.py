@@ -66,6 +66,15 @@ def main():
         help="Included ancestor/descendant intermediates (default: all)",
         default="all",
     )
+    p.add_argument(
+        "-m", "--imported-from", help="IRI of source import ontology to annotate terms with"
+    )
+    p.add_argument(
+        "-M",
+        "--imported-from-property",
+        help="ID of property to use for 'imported from' annotation (default: IAO:0000412)",
+        default="IAO:0000412",
+    )
     p.add_argument("-s", "--source", help="Ontology source to filter imports file")
     p.add_argument("-f", "--format", help="Output format (ttl or json)", default="ttl")
     p.add_argument(
@@ -98,6 +107,7 @@ def extract(args):
 
     predicates = get_terms(args.predicate, args.predicates)
     intermediates = args.intermediates
+    imported_from = args.imported_from
 
     if args.config:
         # Get options from the config file based on the source
@@ -117,6 +127,7 @@ def extract(args):
                     found_source = True
                     intermediates = row.get("Intermediates", "all")
                     predicates_str = row.get("Predicates")
+                    imported_from = row.get("IRI")
                     if predicates_str:
                         # Extend any existing command-line predicates
                         predicates.extend(predicates_str.split(" "))
@@ -134,6 +145,8 @@ def extract(args):
             terms,
             predicates,
             fmt=args.format,
+            imported_from=imported_from,
+            imported_from_property=args.imported_from_property,
             intermediates=intermediates,
             no_hierarchy=args.no_hierarchy,
         )
@@ -151,7 +164,16 @@ def clean(conn):
     conn.commit()
 
 
-def extract_terms(conn, terms, predicates, fmt="ttl", intermediates="all", no_hierarchy=False):
+def extract_terms(
+    conn,
+    terms,
+    predicates,
+    fmt="ttl",
+    imported_from=None,
+    imported_from_property="IAO:0000412",
+    intermediates="all",
+    no_hierarchy=False,
+):
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
         raise Exception("Unknown format: " + fmt)
@@ -370,6 +392,13 @@ def extract_terms(conn, terms, predicates, fmt="ttl", intermediates="all", no_hi
           AND s2.object = 'owl:AnnotationProperty'
           AND s1.object IS NOT NULL"""
     )
+
+    # Finally, if imported_from IRI is included, add this to add terms
+    if imported_from:
+        cur.execute(
+            f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+            SELECT DISTINCT child, child, 'IAO:0000412', '<{imported_from}>' FROM tmp_terms"""
+        )
 
     # Escape QNames
     escape_qnames(cur, "tmp_extract")

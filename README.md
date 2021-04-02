@@ -120,6 +120,8 @@ You may also specify which predicates you would like to include with `-p <term>`
 
 By default, *all* intermediate terms are included between the term to extract and the highest-level term. If you don't want to include any intermediates, you can run `extract` with `--i none`/`--intermediates none`. This maintains the hierarchy between extracted terms, but removes intermediate terms that are not in the set of input terms to extract.
 
+Finally, if you want to annotate all extracted terms with a source ontology IRI, you can use the `-m <IRI>`/`--imported-from <IRI>` option. This expects the full ontology IRI. The annotation added to each term, by default, will use the IAO ['imported from'](http://purl.obolibrary.org/obo/IAO:0000412) property (note that this means `IAO` must be defined in your `prefixes` table as well). You can override this property with `-M <term_id>`/`--import-from-property <term_id>`.
+
 #### Creating Import Modules
 
 `gizmos.extract` can also be used with import configuration files (`-i <file>`/`--imports <file>`):
@@ -156,7 +158,7 @@ python3 -m gizmos.extract -d obi.db -i imports.tsv -c config.tsv -s obi > out.tt
 
 This is a TSV or CSV with the following headers:
 * **Source**: a short ontology ID that specifies the source; matches a source in the imports file
-* **IRI**: optional; the IRI of the ontology for documentation
+* **IRI**: optional; the IRI of the ontology to be added to each term as the value of an ['imported from'](http://purl.obolibrary.org/obo/IAO:0000412) statement
 * **Intermediates**: optional; an `--intermediates` option: `all` or `none`
 * **Predicates**: optional; a space-separated list of predicate IDs to include from the import
 
