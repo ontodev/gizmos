@@ -4,7 +4,9 @@ import csv
 import json
 import re
 
+from copy import deepcopy
 from gizmos.hiccup import render
+from pprint import pprint
 
 
 prefixes = {}
@@ -33,7 +35,6 @@ def renderSubjects(subjects):
             print(" ", predicate)
             for obj in subjects[subject_id][predicate]:
                 print("   ", obj)
-
 
 def row2objectMap(row):
     """Convert a row dict to an object map.
@@ -87,7 +88,6 @@ def thin2subjects(thin):
                     dependencies[subject_id] = set()
                 dependencies[subject_id].add(row["object"])
         subjects[subject_id] = predicates
-        # print(subject_id, predicates)
 
     # Work from leaves to root, nesting the blank structures.
     while dependencies:
@@ -113,31 +113,55 @@ def thin2subjects(thin):
         for subject_id in handled:
             del subjects[subject_id]
 
-    # Handle OWL annotations and RDF reification.
-    # TODO!
     remove = set()
-    for subject_id in subjects.keys():
+    subjects_copy = deepcopy(subjects)
+    for subject_id in sorted(subjects.keys()):
         if subjects[subject_id].get("owl:annotatedSource"):
             print("OWL annotation", subject_id)
             subject = firstObject(subjects[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects[subject_id], "owl:annotatedProperty")
             obj = subjects[subject_id]["owl:annotatedTarget"][0]
-            print(subject, predicate, obj)
-            del subjects[subject_id]["owl:annotatedSource"]
-            del subjects[subject_id]["owl:annotatedProperty"]
-            del subjects[subject_id]["owl:annotatedTarget"]
-            del subjects[subject_id]["rdf:type"]
-            for o in subjects[subject][predicate]:
+            print("<{}, {}, {}>".format(subject, predicate, obj))
+            del subjects_copy[subject_id]["owl:annotatedSource"]
+            del subjects_copy[subject_id]["owl:annotatedProperty"]
+            del subjects_copy[subject_id]["owl:annotatedTarget"]
+            del subjects_copy[subject_id]["rdf:type"]
+            objs = subjects[subject][predicate]
+            objs_copy = []
+            for o in objs:
+                o = deepcopy(o)
                 if o == obj:
-                    o["annotations"] = subjects[subject_id]
+                    o["annotations"] = subjects_copy[subject_id]
                     remove.add(subject_id)
-        if subject_id in subjects and subjects[subject_id].get("rdf:subject"):
+                objs_copy.append(o)
+            subjects_copy[subject][predicate] = objs_copy
+        if subjects[subject_id].get("rdf:subject"):
             print("RDF reification", subject_id)
+            # The rest is similar to the OWL annotation case above, except that we use
+            # rdf:subject, rdf:predicate, and rdf:object instead of owl:annotatedSource,
+            # owl:annotatedProperty, and owl:annotatedTarget.
+            subject = firstObject(subjects[subject_id], "rdf:subject")
+            predicate = firstObject(subjects[subject_id], "rdf:predicate")
+            obj = subjects[subject_id]["rdf:object"][0]
+            print("<{}, {}, {}>".format(subject, predicate, obj))
+            del subjects_copy[subject_id]["rdf:subject"]
+            del subjects_copy[subject_id]["rdf:predicate"]
+            del subjects_copy[subject_id]["rdf:object"]
+            del subjects_copy[subject_id]["rdf:type"]
+            objs = subjects[subject][predicate]
+            objs_copy = []
+            for o in objs:
+                o = deepcopy(o)
+                if o == obj:
+                    o["annotations"] = subjects_copy[subject_id]
+                    remove.add(subject_id)
+                objs_copy.append(o)
+            subjects_copy[subject][predicate] = objs_copy
 
-    for r in remove:
-        del subjects[r]
+    for t in remove:
+        del subjects_copy[t]
 
-    return subjects
+    return subjects_copy
 
 
 def subjects2thick(subjects):
@@ -151,11 +175,13 @@ def subjects2thick(subjects):
     for subject_id in sorted(list(subjects.keys())):
         for predicate in sorted(list(subjects[subject_id].keys())):
             for obj in subjects[subject_id][predicate]:
+                #print("OBJ: {}".format(obj))
                 result = {
                     "subject": subject_id,
                     "predicate": predicate,
                     **obj
                 }
+                #print("RESULT: {}".format(result))
                 if result.get("object") and not isinstance(result["object"], str):
                     result["object"] = json.dumps(result["object"])
                 rows.append(result)
@@ -220,7 +246,7 @@ def rdf2ofs(predicates):
         result = ["ObjectSomeValuesFrom", onProperty, someValuesFrom]
     elif rdfType == "rdf:List":
         result = ["RDFList"] + rdf2list(predicates)
-    # TODO: handle all the OFN types
+    # TODO: handle all the OFN types (See: https://www.w3.org/TR/2012/REC-owl2-mapping-to-rdf-20121211/)
     else:
         raise Exception(f"Unhandled type '{rdfType}' for: {predicates}")
     return result
@@ -355,10 +381,15 @@ if __name__ == "__main__":
     print("List", rdf2ofs(rdfList))
 
     subjects = thin2subjects(thin)
-    renderSubjects(subjects)
-    #for row in subjects2thick(subjects):
-    #    print(row)
-    #thick = subjects2thick(subjects)
+    #pprint(subjects)
+    #renderSubjects(subjects)
+
+    thick = subjects2thick(subjects)
+    #for row in thick:
+    #    print("ROW: {}".format(row))
+    #print("#############################################")
+
+    # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)
     #ofs = reasoned[0]["super"]
     #labels = {
