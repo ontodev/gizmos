@@ -3,6 +3,7 @@
 import csv
 import json
 import re
+import sqlite3
 
 from gizmos.hiccup import render
 
@@ -17,6 +18,17 @@ with open("tests/prefix.tsv") as fh:
 with open("tests/thin.tsv") as fh:
     thin = list(csv.DictReader(fh, delimiter="\t"))
 
+# def dict_factory(cursor, row):
+#     d = {}
+#     for idx, col in enumerate(cursor.description):
+#         d[col[0]] = row[idx]
+#     return d
+# con = sqlite3.connect('obi_core.db')
+# con.row_factory = dict_factory
+# cur = con.cursor()
+# thin = []
+# for row in cur.execute('SELECT * FROM statements'):
+#     thin.append(row)
 
 def renderSubjects(subjects):
     """Print a nested subject dict as indented lines.
@@ -55,7 +67,8 @@ def row2objectMap(row):
         else:
             return {"value": row["value"]}
     else:
-        raise Exception("Invalid RDF row")
+        print("Invalid RDF row", row)
+        #raise Exception("Invalid RDF row")
 
 
 def thin2subjects(thin):
@@ -88,16 +101,28 @@ def thin2subjects(thin):
                 dependencies[subject_id].add(row["object"])
         subjects[subject_id] = predicates
         # print(subject_id, predicates)
+        #if len(subjects.keys()) > 100:
+        #    break
+
+    print("Subjects", len(subjects))
 
     # Work from leaves to root, nesting the blank structures.
+    last_leaves = 0
     while dependencies:
         leaves = set(subjects.keys()) - set(dependencies.keys())
+        if len(leaves) == last_leaves:
+            print("LOOP!?")
+            break
+        last_leaves = len(leaves)
         dependencies = {}
         handled = set()
         for subject_id, predicates in subjects.items():
             for predicate in predicates.keys():
                 objects = []
                 for obj in predicates[predicate]:
+                    if not obj:
+                        print("Bad object", subject_id, predicate, obj)
+                        continue
                     o = obj.get("object")
                     if o and isinstance(o, str) and o.startswith("_:"):
                         if o in leaves:
@@ -118,11 +143,11 @@ def thin2subjects(thin):
     remove = set()
     for subject_id in subjects.keys():
         if subjects[subject_id].get("owl:annotatedSource"):
-            print("OWL annotation", subject_id)
+            #print("OWL annotation", subject_id)
             subject = firstObject(subjects[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects[subject_id], "owl:annotatedProperty")
             obj = subjects[subject_id]["owl:annotatedTarget"][0]
-            print(subject, predicate, obj)
+            #print(subject, predicate, obj)
             del subjects[subject_id]["owl:annotatedSource"]
             del subjects[subject_id]["owl:annotatedProperty"]
             del subjects[subject_id]["owl:annotatedTarget"]
@@ -164,6 +189,54 @@ def subjects2thick(subjects):
 
 def thick2subjects(thick):
     pass
+
+
+### thick to Turtle
+#
+# This code is badly structured.
+# It shouldn't be just returning and printing strings.
+# Instead it should probably be returning lists of triples,
+# maybe with a bnode "head".
+
+def object2ttl(thick):
+    if "object" in thick:
+        if isinstance(thick["object"], str):
+            return thick["object"]
+        else:
+            return predicateMap2ttl(thick["object"])
+    if "value" in thick:
+        # TODO: datatypes and languages
+        return '"' + thick["value"] + '"'
+    else:
+        raise Exception(f"Bad thick triple: {thick}")
+
+b = 0
+def predicateMap2ttl(pred):
+    global b
+    b += 1
+    bnode = f"_:myb{b}"
+    output = bnode + " .\n"
+    for predicate, objects in pred.items():
+        for obj in objects:
+            obj_str = object2ttl(obj)
+            output += f"{bnode} {predicate} {obj_str} .\n"
+    return output
+
+def thick2ttl(prefixes, thick):
+    print("TODO: print prefixes")
+    print()
+    for row in thick:
+        if "object" in row:
+            o = row["object"]
+            if isinstance(o, str) and o.startswith("{"):
+                row["object"] = json.loads(o)
+        obj_str = object2ttl(row)
+        term = " .\n"
+        if "\n" in obj_str:
+            term = ""
+        print(f"{row['subject']} {row['predicate']} {obj_str}{term}", end="")
+        # TODO: OWL Annotations
+        # TODO: RDF Reification
 
 owlTypes = ["owl:Restriction"]
 
@@ -355,10 +428,12 @@ if __name__ == "__main__":
     print("List", rdf2ofs(rdfList))
 
     subjects = thin2subjects(thin)
-    renderSubjects(subjects)
+    #print(len(subjects))
+    #renderSubjects(subjects)
     #for row in subjects2thick(subjects):
     #    print(row)
-    #thick = subjects2thick(subjects)
+    thick = subjects2thick(subjects)
+    thick2ttl({}, thick)
     #reasoned = thick2reasoned(thick)
     #ofs = reasoned[0]["super"]
     #labels = {
