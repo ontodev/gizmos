@@ -456,7 +456,6 @@ if __name__ == "__main__":
     thick = subjects2thick(subjects)
     #for row in thick:
     #    print("ROW: {}".format(row))
-    thick = subjects2thick(subjects)
     thick2ttl({}, thick)
     #print("#############################################")
 
