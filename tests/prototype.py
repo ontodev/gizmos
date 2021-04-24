@@ -214,51 +214,45 @@ def thick2subjects(thick):
 
 
 ### thick to Turtle
-#
-# This code is badly structured.
-# It shouldn't be just returning and printing strings.
-# Instead it should probably be returning lists of triples,
-# maybe with a bnode "head".
 
-def object2ttl(thick):
-    if "object" in thick:
-        if isinstance(thick["object"], str):
-            return thick["object"]
+def thick2obj(thick_row):
+    if "object" in thick_row:
+        if isinstance(thick_row["object"], str):
+            return thick_row["object"]
         else:
-            return predicateMap2ttl(thick["object"])
-    if "value" in thick:
+            return predicateMap2ttls(thick_row["object"])
+    if "value" in thick_row:
         # TODO: datatypes and languages
-        return '"' + thick["value"] + '"'
+        return '"' + thick_row["value"] + '"'
     else:
-        raise Exception(f"Bad thick triple: {thick}")
+        raise Exception(f"Don't know how to handle thick_row: {thick_row}")
 
 b = 0
-def predicateMap2ttl(pred):
+def predicateMap2ttls(pred_map):
     global b
     b += 1
-    bnode = f"_:myb{b}"
-    output = bnode + " .\n"
-    for predicate, objects in pred.items():
-        for obj in objects:
-            obj_str = object2ttl(obj)
-            output += f"{bnode} {predicate} {obj_str} .\n"
-    return output
 
-def thick2ttl(prefixes, thick):
-    print("TODO: print prefixes")
-    print()
-    for row in thick:
+    bnode = f"_:myb{b}"
+    ttls = []
+    for predicate, objects in pred_map.items():
+        for obj in objects:
+            obj = thick2obj(obj)
+            ttls.append({'subject': bnode, 'predicate': predicate, 'object': obj})
+    return ttls
+
+def thick2ttl(thick_rows):
+    triples = []
+    for row in thick_rows:
         if "object" in row:
             o = row["object"]
             if isinstance(o, str) and o.startswith("{"):
                 row["object"] = json.loads(o)
-        obj_str = object2ttl(row)
-        term = " .\n"
-        if "\n" in obj_str:
-            term = ""
-        print(f"{row['subject']} {row['predicate']} {obj_str}{term}", end="")
+
+        obj = thick2obj(row)
+        triples.append({'subject': row['subject'], 'predicate': row['predicate'], 'object': obj})
         # TODO: OWL Annotations
         # TODO: RDF Reification
+    return triples
 
 owlTypes = ["owl:Restriction"]
 
@@ -450,14 +444,32 @@ if __name__ == "__main__":
     print("List", rdf2ofs(rdfList))
 
     subjects = thin2subjects(thin)
-    #pprint(subjects)
+    pprint(subjects)
     #renderSubjects(subjects)
+    print("#############################################")
 
     thick = subjects2thick(subjects)
-    #for row in thick:
-    #    print("ROW: {}".format(row))
-    thick2ttl({}, thick)
-    #print("#############################################")
+    for row in thick:
+        print("ROW: {}".format(row))
+    print("#############################################")
+
+    print("Prefixes:")
+    pprint(prefixes)
+    print("#############################################")
+
+    triples = thick2ttl(thick)
+    def render_triples(triples):
+        for ttl in triples:
+            print("{} {} ".format(ttl['subject'], ttl['predicate']), end="")
+            if isinstance(ttl['object'], str):
+                print("{} .".format(ttl['object']))
+            else:
+                nested_subject = [item['subject'] for item in ttl['object']].pop()
+                print("{} .".format(nested_subject))
+                render_triples(ttl['object'])
+
+    render_triples(triples)
+    print("#############################################")
 
     # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)
