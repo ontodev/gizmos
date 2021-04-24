@@ -138,7 +138,7 @@ def thin2subjects(thin):
     subjects_copy = deepcopy(subjects)
     for subject_id in sorted(subjects.keys()):
         if subjects[subject_id].get("owl:annotatedSource"):
-            #print("OWL annotation", subject_id)
+            print("OWL annotation", subject_id)
             subject = firstObject(subjects[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects[subject_id], "owl:annotatedProperty")
             obj = subjects[subject_id]["owl:annotatedTarget"][0]
@@ -216,21 +216,26 @@ def thick2subjects(thick):
 ### thick to Turtle
 
 def thick2obj(thick_row):
+    print("In thick2obj. Received thick_row: {}".format(thick_row))
     if "object" in thick_row:
         if isinstance(thick_row["object"], str):
             return thick_row["object"]
         else:
             return predicateMap2ttls(thick_row["object"])
-    if "value" in thick_row:
-        # TODO: datatypes and languages
-        return '"' + thick_row["value"] + '"'
-    else:
-        raise Exception(f"Don't know how to handle thick_row: {thick_row}")
+
+    for key in ['value', 'datatype', 'language']:
+        if key in thick_row:
+            return '"' + thick_row[key] + '"'
+
+    # We shouldn't get to here:
+    raise Exception(f"Don't know how to handle thick_row: {thick_row}")
 
 b = 0
 def predicateMap2ttls(pred_map):
     global b
     b += 1
+
+    print("In predicateMap2ttls. Received: {}".format(pred_map))
 
     bnode = f"_:myb{b}"
     ttls = []
@@ -241,6 +246,7 @@ def predicateMap2ttls(pred_map):
     return ttls
 
 def thick2ttl(thick_rows):
+    print("In thick2ttl. Received thick_rows: {}".format(thick_rows))
     triples = []
     for row in thick_rows:
         if "object" in row:
@@ -443,21 +449,30 @@ if __name__ == "__main__":
     rdfList = {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'A'}], 'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'B'}], 'rdf:rest': [{'object': 'rdf:nil'}]}}]}
     print("List", rdf2ofs(rdfList))
 
+    print("THIN ROWS:")
+    for row in thin:
+        print("{}".format(row))
+
     subjects = thin2subjects(thin)
+    print("SUBJECTS:")
     pprint(subjects)
     #renderSubjects(subjects)
     print("#############################################")
 
     thick = subjects2thick(subjects)
+    print("THICK ROWS:")
     for row in thick:
-        print("ROW: {}".format(row))
+        print("{}".format(row))
     print("#############################################")
 
-    print("Prefixes:")
+    print("PREFIXES:")
     pprint(prefixes)
     print("#############################################")
 
     triples = thick2ttl(thick)
+    print("TRIPLES:")
+    pprint(triples)
+    print("#############################################")
     def render_triples(triples):
         for ttl in triples:
             print("{} {} ".format(ttl['subject'], ttl['predicate']), end="")
@@ -468,6 +483,7 @@ if __name__ == "__main__":
                 print("{} .".format(nested_subject))
                 render_triples(ttl['object'])
 
+    print("RENDERED TRIPLES:")
     render_triples(triples)
     print("#############################################")
 
