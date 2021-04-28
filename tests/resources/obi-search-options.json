@@ -1,0 +1,18 @@
+[
+    {
+        "id": "OBI:0302731",
+        "label": "buffer role",
+        "short_label": "OBI:0302731",
+        "synonym": "buffer",
+        "property": "rdfs:label",
+        "order": 1
+    },
+    {
+        "id": "OBI:0100046",
+        "label": "phosphate buffered saline solution",
+        "short_label": "OBI:0100046",
+        "synonym": "PBS buffer",
+        "property": "rdfs:label",
+        "order": 2
+    }
+]
