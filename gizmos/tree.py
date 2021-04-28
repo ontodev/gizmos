@@ -940,7 +940,7 @@ def get_ontology(cur, prefixes):
     res = cur.fetchone()
     if not res:
         return iri, None
-    return iri, res["value"]
+    return iri, res[0]
 
 
 def term2rdfa(
@@ -1070,7 +1070,7 @@ def term2rdfa(
               AND value='true'"""
     )
     for row in cur:
-        obsolete.append(row["subject"])
+        obsolete.append(row[0])
 
     # If the compact URIs in the labels map are also in the tree, then add the label info to the
     # corresponding node in the tree:
