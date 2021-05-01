@@ -223,9 +223,13 @@ def thick2obj(thick_row):
         else:
             return predicateMap2ttls(thick_row["object"])
 
-    for key in ['value', 'datatype', 'language']:
-        if key in thick_row:
-            return '"' + thick_row[key] + '"'
+    if 'value' in thick_row:
+        if 'datatype' in thick_row:
+            return '"{}"^^{}'.format(thick_row['value'], thick_row['datatype'])
+        elif 'language' in thick_row:
+            return '"{}"@{}'.format(thick_row['value'], thick_row['language'])
+        else:
+            return '{}'.format(thick_row['value'])
 
     # We shouldn't get to here:
     raise Exception(f"Don't know how to handle thick_row: {thick_row}")
