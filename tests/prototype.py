@@ -134,47 +134,64 @@ def thin2subjects(thin):
         for subject_id in handled:
             del subjects[subject_id]
 
+    pprint(subjects)
+    print("########################################")
     remove = set()
-    subjects_copy = deepcopy(subjects)
+    subjects_copy = {}
     for subject_id in sorted(subjects.keys()):
-        if subjects[subject_id].get("owl:annotatedSource"):
+        if not subjects_copy.get(subject_id):
+            subjects_copy[subject_id] = deepcopy(subjects[subject_id])
+
+        if subjects_copy[subject_id].get("owl:annotatedSource"):
             print("OWL annotation", subject_id)
-            subject = firstObject(subjects[subject_id], "owl:annotatedSource")
-            predicate = firstObject(subjects[subject_id], "owl:annotatedProperty")
-            obj = subjects[subject_id]["owl:annotatedTarget"][0]
+            subject = firstObject(subjects_copy[subject_id], "owl:annotatedSource")
+            predicate = firstObject(subjects_copy[subject_id], "owl:annotatedProperty")
+            obj = firstObject(subjects_copy[subject_id], "owl:annotatedTarget")
             print("<{}, {}, {}>".format(subject, predicate, obj))
+
             del subjects_copy[subject_id]["owl:annotatedSource"]
             del subjects_copy[subject_id]["owl:annotatedProperty"]
             del subjects_copy[subject_id]["owl:annotatedTarget"]
             del subjects_copy[subject_id]["rdf:type"]
-            objs = subjects[subject][predicate]
+
+            if not subjects_copy.get(subject):
+                subjects_copy[subject] = deepcopy(subjects[subject])
+            if not subjects_copy[subject].get(predicate):
+                subjects_copy[subject][predicate] = deepcopy(subjects[subject][predicate])
+
+            objs = subjects_copy[subject][predicate]
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o == obj:
+                if o.get("object") == obj:
                     o["annotations"] = subjects_copy[subject_id]
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
-        if subjects[subject_id].get("rdf:subject"):
+
+        if subjects_copy[subject_id].get("rdf:subject"):
             print("RDF reification", subject_id)
-            # The rest is similar to the OWL annotation case above, except that we use
-            # rdf:subject, rdf:predicate, and rdf:object instead of owl:annotatedSource,
-            # owl:annotatedProperty, and owl:annotatedTarget.
-            subject = firstObject(subjects[subject_id], "rdf:subject")
-            predicate = firstObject(subjects[subject_id], "rdf:predicate")
-            obj = subjects[subject_id]["rdf:object"][0]
+            subject = firstObject(subjects_copy[subject_id], "rdf:subject")
+            predicate = firstObject(subjects_copy[subject_id], "rdf:predicate")
+            obj = firstObject(subjects_copy[subject_id], "rdf:object")
             print("<{}, {}, {}>".format(subject, predicate, obj))
+
             del subjects_copy[subject_id]["rdf:subject"]
             del subjects_copy[subject_id]["rdf:predicate"]
             del subjects_copy[subject_id]["rdf:object"]
             del subjects_copy[subject_id]["rdf:type"]
-            objs = subjects[subject][predicate]
+
+            if not subjects_copy.get(subject):
+                subjects_copy[subject] = deepcopy(subjects[subject])
+            if not subjects_copy[subject].get(predicate):
+                subjects_copy[subject][predicate] = deepcopy(subjects[subject][predicate])
+
+            objs = subjects_copy[subject][predicate]
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o == obj:
-                    o["annotations"] = subjects_copy[subject_id]
+                if o.get("object") == obj:
+                    o["metadata"] = subjects_copy[subject_id]
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
