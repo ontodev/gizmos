@@ -4,11 +4,16 @@ import csv
 import json
 import re
 import sqlite3
+import sys
 
 from copy import deepcopy
 from gizmos.hiccup import render
-from pprint import pprint
+from pprint import pformat
 
+DEBUG=True
+def log(message):
+    if DEBUG:
+        print(message, file=sys.stderr)
 
 prefixes = {}
 with open("tests/prefix.tsv") as fh:
@@ -18,6 +23,7 @@ with open("tests/prefix.tsv") as fh:
             prefixes[row["prefix"]] = row["base"]
 
 with open("tests/thin.tsv") as fh:
+#with open("obi-complete.tsv") as fh:
     thin = list(csv.DictReader(fh, delimiter="\t"))
 
 # def dict_factory(cursor, row):
@@ -68,7 +74,7 @@ def row2objectMap(row):
         else:
             return {"value": row["value"]}
     else:
-        print("Invalid RDF row", row)
+        log("Invalid RDF row {}".format(row))
         #raise Exception("Invalid RDF row")
 
 
@@ -107,7 +113,7 @@ def thin2subjects(thin):
     while dependencies:
         leaves = set(subjects.keys()) - set(dependencies.keys())
         if len(leaves) == last_leaves:
-            print("LOOP!?")
+            log("LOOP!?")
             break
         last_leaves = len(leaves)
         dependencies = {}
@@ -117,7 +123,7 @@ def thin2subjects(thin):
                 objects = []
                 for obj in predicates[predicate]:
                     if not obj:
-                        print("Bad object", subject_id, predicate, obj)
+                        log("Bad object: <{} {} {}>".format(subject_id, predicate, obj))
                         continue
                     o = obj.get("object")
                     if o and isinstance(o, str) and o.startswith("_:"):
@@ -134,8 +140,6 @@ def thin2subjects(thin):
         for subject_id in handled:
             del subjects[subject_id]
 
-    pprint(subjects)
-    print("########################################")
     remove = set()
     subjects_copy = {}
     for subject_id in sorted(subjects.keys()):
@@ -143,11 +147,11 @@ def thin2subjects(thin):
             subjects_copy[subject_id] = deepcopy(subjects[subject_id])
 
         if subjects_copy[subject_id].get("owl:annotatedSource"):
-            print("OWL annotation", subject_id)
+            log("OWL annotation: {}".format(subject_id))
             subject = firstObject(subjects_copy[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects_copy[subject_id], "owl:annotatedProperty")
             obj = firstObject(subjects_copy[subject_id], "owl:annotatedTarget")
-            print("<{}, {}, {}>".format(subject, predicate, obj))
+            log("<{}, {}, {}>".format(subject, predicate, obj))
 
             del subjects_copy[subject_id]["owl:annotatedSource"]
             del subjects_copy[subject_id]["owl:annotatedProperty"]
@@ -170,11 +174,11 @@ def thin2subjects(thin):
             subjects_copy[subject][predicate] = objs_copy
 
         if subjects_copy[subject_id].get("rdf:subject"):
-            print("RDF reification", subject_id)
+            log("RDF reification: {}".format(subject_id))
             subject = firstObject(subjects_copy[subject_id], "rdf:subject")
             predicate = firstObject(subjects_copy[subject_id], "rdf:predicate")
             obj = firstObject(subjects_copy[subject_id], "rdf:object")
-            print("<{}, {}, {}>".format(subject, predicate, obj))
+            log("<{}, {}, {}>".format(subject, predicate, obj))
 
             del subjects_copy[subject_id]["rdf:subject"]
             del subjects_copy[subject_id]["rdf:predicate"]
@@ -213,13 +217,11 @@ def subjects2thick(subjects):
     for subject_id in sorted(list(subjects.keys())):
         for predicate in sorted(list(subjects[subject_id].keys())):
             for obj in subjects[subject_id][predicate]:
-                #print("OBJ: {}".format(obj))
                 result = {
                     "subject": subject_id,
                     "predicate": predicate,
                     **obj
                 }
-                #print("RESULT: {}".format(result))
                 if result.get("object") and not isinstance(result["object"], str):
                     result["object"] = json.dumps(result["object"])
                 rows.append(result)
@@ -232,42 +234,102 @@ def thick2subjects(thick):
 
 ### thick to Turtle
 
+def triples2ttls(triples):
+    ttls = []
+    for triple in triples:
+        first_part = "{} {} ".format(triple['subject'], triple['predicate'])
+        if isinstance(triple['object'], str):
+            ttls.append("{}{} .".format(first_part, triple['object']))
+        else:
+            # Look through triple['object'], and if the block is either a reification
+            # or an annotation, switch the subject with the object being annotated/reified, otherwise
+            # leave the subject as is:
+            nested_target = None
+            for item in triple['object']:
+                if item['predicate'] in ['owl:annotatedTarget', 'rdf:object']:
+                    nested_target = item['object']
+                    break
+                elif not nested_target:
+                    nested_target = item['subject']
+
+            ttls.append("{}{} .".format(first_part, nested_target))
+            ttls += triples2ttls(triple['object'])
+    return ttls
+
 def thick2obj(thick_row):
-    print("In thick2obj. Received thick_row: {}".format(thick_row))
+    log("In thick2obj. Received thick_row: {}".format(thick_row))
+
+    if 'object' not in thick_row and 'value' not in thick_row:
+        raise Exception(f"Don't know how to handle thick_row without value or object: {thick_row}")
+
+    def decompress_annotation(target, kind):
+        if isinstance(target, str):
+            target = {'owl:annotatedTarget': [{kind: target}]}
+        target['owl:annotatedSource'] = [{'object': thick_row['subject']}]
+        target['owl:annotatedProperty'] = [{'object': thick_row['predicate']}]
+        target['rdf:type'] = [{'object': 'owl:Axiom'}]
+        for key in thick_row['annotations']:
+            target[key] = thick_row['annotations'][key]
+        return target
+
+    def decompress_reification(target, kind):
+        if isinstance(target, str):
+            target = {'rdf:object': [{kind: target}]}
+        target['rdf:subject'] = [{'object': thick_row['subject']}]
+        target['rdf:predicate'] = [{'object': thick_row['predicate']}]
+        target['rdf:type'] = [{'object': 'rdf:Statement'}]
+        for key in thick_row['annotations']:
+            target[key] = thick_row['metadata'][key]
+        return target
+
     if "object" in thick_row:
-        if isinstance(thick_row["object"], str):
-            return thick_row["object"]
+        target = thick_row['object']
+        triples = []
+        if 'annotations' not in thick_row and 'metadata' not in thick_row:
+            if not isinstance(target, str):
+                triples = predicateMap2triples(target)
         else:
-            return predicateMap2ttls(thick_row["object"])
-
-    if 'value' in thick_row:
+            if 'annotations' in thick_row:
+                triples += predicateMap2triples(decompress_annotation(target, 'object'))
+            if 'metadata' in thick_row:
+                triples += predicateMap2triples(decompress_reification(target, 'object'))
+    elif 'value' in thick_row:
+        target = thick_row['value']
+        triples = []
         if 'datatype' in thick_row:
-            return '"{}"^^{}'.format(thick_row['value'], thick_row['datatype'])
+            target = '"{}"^^{}'.format(target, thick_row['datatype'])
         elif 'language' in thick_row:
-            return '"{}"@{}'.format(thick_row['value'], thick_row['language'])
+            target = '"{}"@{}'.format(target, thick_row['language'])
         else:
-            return '{}'.format(thick_row['value'])
+            target = '{}'.format(target)
 
-    # We shouldn't get to here:
-    raise Exception(f"Don't know how to handle thick_row: {thick_row}")
+        if 'annotations' not in thick_row and 'metadata' not in thick_row:
+            if not isinstance(target, str):
+                triples = predicateMap2triples(target)
+        else:
+            if 'annotations' in thick_row:
+                triples += predicateMap2triples(decompress_annotation(target, 'value'))
+            if 'metadata' in thick_row:
+                triples += predicat(decompress_reification(target, 'value'))
+
+    return target if not triples else triples
 
 b = 0
-def predicateMap2ttls(pred_map):
+def predicateMap2triples(pred_map):
     global b
     b += 1
-
-    print("In predicateMap2ttls. Received: {}".format(pred_map))
+    log("In predicateMap2triples. Received: {}".format(pred_map))
 
     bnode = f"_:myb{b}"
-    ttls = []
+    triples = []
     for predicate, objects in pred_map.items():
         for obj in objects:
             obj = thick2obj(obj)
-            ttls.append({'subject': bnode, 'predicate': predicate, 'object': obj})
-    return ttls
+            triples.append({'subject': bnode, 'predicate': predicate, 'object': obj})
+    return triples
 
-def thick2ttl(thick_rows):
-    print("In thick2ttl. Received thick_rows: {}".format(thick_rows))
+def thick2triples(thick_rows):
+    log("In thick2triples. Received thick_rows: {}".format(thick_rows))
     triples = []
     for row in thick_rows:
         if "object" in row:
@@ -277,8 +339,6 @@ def thick2ttl(thick_rows):
 
         obj = thick2obj(row)
         triples.append({'subject': row['subject'], 'predicate': row['predicate'], 'object': obj})
-        # TODO: OWL Annotations
-        # TODO: RDF Reification
     return triples
 
 owlTypes = ["owl:Restriction"]
@@ -468,44 +528,34 @@ def subjects2rdfa(labels, subjects):
 
 if __name__ == "__main__":
     rdfList = {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'A'}], 'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'B'}], 'rdf:rest': [{'object': 'rdf:nil'}]}}]}
-    print("List", rdf2ofs(rdfList))
+    log("List {}".format(rdf2ofs(rdfList)))
 
-    print("THIN ROWS:")
-    for row in thin:
-        print("{}".format(row))
+    log("THIN ROWS:")
+    [log(row) for row in thin]
 
     subjects = thin2subjects(thin)
     print("SUBJECTS:")
-    pprint(subjects)
+    print(pformat(subjects))
     #renderSubjects(subjects)
     print("#############################################")
 
     thick = subjects2thick(subjects)
     print("THICK ROWS:")
-    for row in thick:
-        print("{}".format(row))
+    [print(row) for row in thick]
     print("#############################################")
 
     print("PREFIXES:")
-    pprint(prefixes)
+    print(pformat(prefixes))
     print("#############################################")
 
-    triples = thick2ttl(thick)
+    triples = thick2triples(thick)
     print("TRIPLES:")
-    pprint(triples)
+    print(pformat(triples))
     print("#############################################")
-    def render_triples(triples):
-        for ttl in triples:
-            print("{} {} ".format(ttl['subject'], ttl['predicate']), end="")
-            if isinstance(ttl['object'], str):
-                print("{} .".format(ttl['object']))
-            else:
-                nested_subject = [item['subject'] for item in ttl['object']].pop()
-                print("{} .".format(nested_subject))
-                render_triples(ttl['object'])
 
-    print("RENDERED TRIPLES:")
-    render_triples(triples)
+    print("TERSE TRIPLES:")
+    ttls = triples2ttls(triples)
+    [print(ttl) for ttl in ttls]
     print("#############################################")
 
     # Wait on this one for now ...
@@ -515,11 +565,11 @@ if __name__ == "__main__":
     #    "ex:part-of": "part of",
     #    "ex:bar": "Bar",
     #}
-    #print("OFS", ofs)
-    #print("OMN", ofs2omn(labels, ofs))
+    #print("OFS {}".format(ofs))
+    #print("OMN {}".format(ofs2omn(labels, ofs)))
     #rdfa = ofs2rdfa(labels, ofs)
-    #print("RDFa", rdfa)
-    #print("HTML", render(prefixes, rdfa))
+    #print("RDFa {}".format(rdfa))
+    #print("HTML {}".format(render(prefixes, rdfa)))
     #rdfa = subject2rdfa(labels, "ex:foo", subjects["ex:foo"])
-    ##print("RDFa", rdfa)
+    ##print("RDFa {}".format(rdfa))
     #print("HTML\n" + render(prefixes, rdfa))
