@@ -310,7 +310,7 @@ def thick2obj(thick_row):
             if 'annotations' in thick_row:
                 triples += predicateMap2triples(decompress_annotation(target, 'value'))
             if 'metadata' in thick_row:
-                triples += predicate(decompress_reification(target, 'value'))
+                triples += predicateMap2triples(decompress_reification(target, 'value'))
 
     return target if not triples else triples
 
