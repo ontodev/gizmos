@@ -113,8 +113,10 @@ def thin2subjects(thin):
     while dependencies:
         leaves = set(subjects.keys()) - set(dependencies.keys())
         if len(leaves) == last_leaves:
+            # This is not necessarily a problem, so we comment out the `break` statement here, but
+            # we emit a warning anyway.
             log("LOOP!?")
-            break
+            # break
         last_leaves = len(leaves)
         dependencies = {}
         handled = set()
