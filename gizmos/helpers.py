@@ -4,6 +4,7 @@ import re
 import sqlite3
 
 from configparser import ConfigParser
+from rdflib import Graph
 
 
 def add_labels(cur):
@@ -42,11 +43,110 @@ def add_labels(cur):
         )
 
 
-def dict_factory(cursor, row):
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
+def escape(curie):
+    """Escape illegal characters in the local ID portion of a CURIE"""
+    prefix = curie.split(":")[0]
+    local_id = curie.split(":")[1]
+    local_id_fixed = re.sub(r"(?<!\\)([~!$&'()*+,;=/?#@%])", r"\\\1", local_id)
+    return f"{prefix}:{local_id_fixed}"
+
+
+def escape_qnames(cur, table):
+    """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
+    for keyword in ["stanza", "subject", "predicate", "object"]:
+        cur.execute(
+            f"""SELECT DISTINCT {keyword} FROM {table}
+                WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%'"""
+        )
+        for row in cur.fetchall():
+            curie = row[0]
+            escaped = escape(curie)
+            if curie != escaped:
+                cur.execute(
+                    f"UPDATE {table} SET {keyword} = '{escaped}' WHERE {keyword} = '{curie}'"
+                )
+
+
+def get_ancestors_capped(cur, top_terms, ancestors, term_id):
+    """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
+    or a top-level term is reached (below owl:Thing).
+
+    :param cur: database Cursor object to query
+    :param top_terms: set of top terms to stop at
+    :param ancestors: set to collect ancestors in
+    :param term_id: term ID to get the ancestors of"""
+    cur.execute(
+        f"""SELECT DISTINCT object FROM statements
+            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND object NOT LIKE '_:%'"""
+    )
+    res = cur.fetchall()
+    if not res:
+        # No parents, we've hit the very top-level
+        ancestors.add(term_id)
+        return
+    for r in res:
+        parent = r[0]
+        if parent == "owl:Thing" or (top_terms and r[0] in top_terms):
+            continue
+        ancestors.add(r[0])
+        get_ancestors_capped(cur, top_terms, ancestors, parent)
+
+
+def get_ancestors(cur, term_id):
+    """Return a set of ancestors for a given term ID, all the way to the top-level (below owl:Thing)
+
+    :param cur: database Cursor object to query
+    :param term_id: term ID to get the ancestors of"""
+    cur.execute(
+        f"""WITH RECURSIVE ancestors(node) AS (
+                VALUES ('{term_id}')
+                UNION
+                 SELECT object AS node
+                FROM statements
+                WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                  AND object = '{term_id}'
+                UNION
+                SELECT object AS node
+                FROM statements, ancestors
+                WHERE ancestors.node = statements.stanza
+                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                  AND statements.object NOT LIKE '_:%'
+            )
+            SELECT * FROM ancestors""",
+    )
+    return set([x[0] for x in cur.fetchall()])
+
+
+def get_bottom_descendants(cur, term_id, descendants):
+    """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
+    terms are those that are not ever used as the object of an rdfs:subClassOf statement.
+
+    :param cur: database Cursor object to query
+    :param term_id: term ID to get the bottom descendants of
+    :param descendants: a set to add descendants to
+    """
+    cur.execute(
+        f"""SELECT DISTINCT stanza FROM statements
+            WHERE object = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+    )
+    res = cur.fetchall()
+    if not res:
+        # No children - this is a bottom-level term
+        descendants.add(term_id)
+        return
+    for r in res:
+        get_bottom_descendants(cur, r[0], descendants)
+
+
+def get_children(cur, term_id):
+    """Return a set of children for a given term ID."""
+    cur.execute(
+        f"""SELECT DISTINCT stanza FROM statements
+            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND object = '{term_id}'""",
+    )
+    return set([x[0] for x in cur.fetchall()])
 
 
 def get_connection(file):
@@ -76,6 +176,27 @@ def get_connection(file):
     return None
 
 
+def get_descendants(cur, term_id):
+    """Return a set of descendants for a given term ID."""
+    cur.execute(
+        f"""WITH RECURSIVE descendants(node) AS (
+                VALUES ('{term_id}')
+                UNION
+                 SELECT stanza AS node
+                FROM statements
+                WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                  AND stanza = '{term_id}'
+                UNION
+                SELECT stanza AS node
+                FROM statements, descendants
+                WHERE descendants.node = statements.object
+                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+            )
+            SELECT * FROM descendants""",
+    )
+    return set([x[0] for x in cur.fetchall()])
+
+
 def get_ids(cur, id_or_labels):
     """Create a list of IDs from a list of IDs or labels."""
     ids = []
@@ -95,6 +216,16 @@ def get_ids(cur, id_or_labels):
     return ids
 
 
+def get_parents(cur, term_id):
+    """Return a set of parents for a given term ID."""
+    cur.execute(
+        f"""SELECT DISTINCT object FROM statements
+            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+            AND object NOT LIKE '_:%'"""
+    )
+    return set([x[0] for x in cur.fetchall()])
+
+
 def get_terms(term_list, terms_file):
     """Get a list of terms from a list and/or a file from args."""
     terms = term_list or []
@@ -111,3 +242,87 @@ def get_terms(term_list, terms_file):
                 else:
                     terms.append(line.strip())
     return terms
+
+
+def get_top_ancestors(cur, ancestors, term_id, top_terms=None):
+    """Get the top-level ancestor or ancestors for a given term with no intermediates. The top-level
+    terms are those with no rdfs:subClassOf statement, or direct children of owl:Thing. If top_terms
+    is included, they may also be those terms in that list.
+
+    :param cur: database Cursor object to query
+    :param ancestors: a set to add ancestors to
+    :param term_id: term ID to get the top ancestor of
+    :param top_terms: a list of top-level terms to stop at
+                      (if an ancestor is in this set, it will be added and recursion will stop)
+    """
+    cur.execute(
+        f"""SELECT DISTINCT object FROM statements
+            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND object NOT LIKE '_:%'"""
+    )
+    res = cur.fetchall()
+    if not res:
+        ancestors.add(term_id)
+        return
+    for r in res:
+        if r[0] == "owl:Thing":
+            ancestors.add(term_id)
+            break
+        if top_terms and r[0] in top_terms:
+            ancestors.add(r[0])
+        else:
+            get_top_ancestors(cur, ancestors, r[0], top_terms=top_terms)
+
+
+def get_ttl(cur, table):
+    """Get the given table as lines of Turtle (the lines are returned as a list)."""
+    # Get ttl lines
+    cur.execute(
+        f"""WITH literal(value, escaped) AS (
+              SELECT DISTINCT
+                value,
+                replace(replace(replace(value, '\\', '\\\\'), '"', '\\"'), '
+            ', '\\n') AS escaped
+              FROM {table}
+            )
+            SELECT
+              '@prefix ' || prefix || ': <' || base || '> .'
+            FROM prefix
+            UNION ALL
+            SELECT DISTINCT
+               subject
+            || ' '
+            || predicate
+            || ' '
+            || coalesce(
+                 object,
+                 '"' || escaped || '"^^' || datatype,
+                 '"' || escaped || '"@' || language,
+                 '"' || escaped || '"'
+               )
+            || ' .'
+            FROM {table} LEFT JOIN literal ON {table}.value = literal.value;"""
+    )
+    lines = []
+    for row in cur.fetchall():
+        line = row[0]
+        if not line:
+            continue
+        # Replace newlines
+        line = line.replace("\n", "\\n")
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def ttl_to_json(cur, ttl):
+    # Create a Graph object from the TTL string
+    graph = Graph()
+    graph.parse(data=ttl, format="turtle")
+
+    # Create the context with prefixes
+    cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
+    context = {}
+    for row in cur.fetchall():
+        context[row[0]] = {"@id": row[1], "@type": "@id"}
+    return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")

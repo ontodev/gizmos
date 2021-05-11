@@ -1,0 +1,47 @@
+@prefix BFO: <http://purl.obolibrary.org/obo/BFO_> .
+@prefix CHEBI: <http://purl.obolibrary.org/obo/CHEBI_> .
+@prefix CL: <http://purl.obolibrary.org/obo/CL_> .
+@prefix CoVIC: <https://cvdb.ontodev.com/antibody/> .
+@prefix IAO: <http://purl.obolibrary.org/obo/IAO_> .
+@prefix IEDB: <http://iedb.org/> .
+@prefix NCBITaxon: <http://purl.obolibrary.org/obo/NCBITaxon_> .
+@prefix OBI: <http://purl.obolibrary.org/obo/OBI_> .
+@prefix ONTIE: <https://ontology.iedb.org/ontology/ONTIE_> .
+@prefix PR: <http://purl.obolibrary.org/obo/PR_> .
+@prefix PRO: <http://www.uniprot.org/annotation/PRO_> .
+@prefix UC: <http://purl.uniprot.org/core/> .
+@prefix UP: <http://purl.uniprot.org/uniprot/> .
+@prefix dce: <http://purl.org/dc/elements/1.1/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix ds: <https://cvdb.ontodev.com/dataset/> .
+@prefix ex: <http://example.com> .
+@prefix faldo: <http://biohackathon.org/resource/faldo#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix iedb-protein: <http://iedb.org/taxon-protein/> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix oio: <http://www.geneontology.org/formats/oboInOwl#> .
+@prefix org: <https://cvdb.ontodev.com/organization/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prefix: <file:///Users/tauber/github/gizmos/base> .
+@prefix protege: <http://protege.stanford.edu/plugins/owl/protege#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix user: <https://cvdb.ontodev.com/user/> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+obo:OBI_0000576 a owl:Class ;
+    rdfs:label "scattered molecular aggregate"@en ;
+    rdfs:subClassOf obo:BFO_0000040 .
+
+obo:OBI_0100046 a owl:Class ;
+    rdfs:label "phosphate buffered saline solution"@en ;
+    rdfs:subClassOf obo:OBI_0302729 .
+
+obo:OBI_0302729 a owl:Class ;
+    rdfs:label "chemical solution"@en ;
+    rdfs:subClassOf obo:BFO_0000040 .
+
+obo:BFO_0000040 a owl:Class ;
+    rdfs:label "material entity"@en .
+
