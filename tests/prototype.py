@@ -9,6 +9,7 @@ import sys
 from copy import deepcopy
 from gizmos.hiccup import render
 from pprint import pformat
+from rdflib import Graph, BNode, URIRef, Literal
 
 DEBUG=True
 def log(message):
@@ -236,7 +237,43 @@ def thick2subjects(thick):
 
 ### thick to Turtle
 
+def render_ttls(ttls):
+    for (subj, pred, obj) in ttls:
+        print("{} {} {} .".format(subj, pred, obj))
+
+def create_node(content):
+    if content.startswith('"') or content.startswith('<'):
+        return Literal(content)
+    elif content.startswith('_:'):
+        return BNode(content)
+    else:
+        return URIRef(content)
+
 def triples2ttls(triples):
+    ttls = []
+    for triple in triples:
+        subj = create_node(triple['subject'])
+        pred = create_node(triple['predicate'])
+        obj = triple['object']
+        if isinstance(obj, str):
+            ttls.append((subj, pred, create_node(obj)))
+        else:
+            # Look through triple['object'], and if the block is either a reification
+            # or an annotation, switch the subject with the object being annotated/reified, otherwise
+            # leave the subject as is:
+            nested_target = None
+            for item in obj:
+                if item['predicate'] in ['owl:annotatedTarget', 'rdf:object']:
+                    nested_target = item['object']
+                    break
+                elif not nested_target:
+                    nested_target = item['subject']
+            ttls.append((subj, pred, create_node(nested_target)))
+            ttls += triples2ttls(obj)
+
+    return ttls
+
+def triples2ttls_old(triples):
     ttls = []
     for triple in triples:
         first_part = "{} {} ".format(triple['subject'], triple['predicate'])
@@ -256,6 +293,7 @@ def triples2ttls(triples):
 
             ttls.append("{}{} .".format(first_part, nested_target))
             ttls += triples2ttls(triple['object'])
+
     return ttls
 
 def thick2obj(thick_row):
@@ -557,7 +595,7 @@ if __name__ == "__main__":
 
     print("TERSE TRIPLES:")
     ttls = triples2ttls(triples)
-    [print(ttl) for ttl in ttls]
+    render_ttls(ttls)
     print("#############################################")
 
     # Wait on this one for now ...
