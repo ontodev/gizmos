@@ -237,26 +237,48 @@ def thick2subjects(thick):
 
 ### thick to Turtle
 
-def render_ttls(ttls):
-    for (subj, pred, obj) in ttls:
+def render_graph(graph):
+    ttls = sorted([(s, p, o) for s, p, o in graph])
+    for subj, pred, obj in ttls:
         print("{} {} {} .".format(subj, pred, obj))
 
-def create_node(content):
-    if content.startswith('"') or content.startswith('<'):
-        return Literal(content)
-    elif content.startswith('_:'):
-        return BNode(content)
-    else:
-        return URIRef(content)
+def deprefix(content):
+    m = re.compile(r"([\w\-]+):(.*)").match(content)
+    if m and prefixes.get(m[1]):
+        return URIRef("{}{}".format(prefixes[m[1]], m[2]))
 
-def triples2ttls(triples):
-    ttls = []
+def create_node(content):
+    if content.startswith('_:'):
+        return BNode(content)
+    elif content.startswith('<'):
+        return URIRef(content.strip('<>'))
+    else:
+        deprefixed_content = deprefix(content)
+        if deprefixed_content:
+            return deprefixed_content
+        else:
+            items = content.split('\"@') if content.startswith('"') else content.split('@')
+            if len(items) == 2:
+                literal = Literal(items[0], lang=items[1])
+                print("{}".format((literal, 'dummy')))
+                return literal
+            items = content.split('\"^^') if content.startswith('"') else content.split('^^')
+            if len(items) == 2:
+                datatype = deprefix(items[1])
+                datatype = URIRef(items[1]) if not datatype else datatype
+                literal = Literal(items[0], datatype=datatype)
+                print("{}".format((literal, 'dummy')))
+                return literal
+            return Literal(content)
+
+def triples2graph(triples):
+    graph = Graph()
     for triple in triples:
         subj = create_node(triple['subject'])
         pred = create_node(triple['predicate'])
         obj = triple['object']
         if isinstance(obj, str):
-            ttls.append((subj, pred, create_node(obj)))
+            graph.add((subj, pred, create_node(obj)))
         else:
             # Look through triple['object'], and if the block is either a reification
             # or an annotation, switch the subject with the object being annotated/reified, otherwise
@@ -268,33 +290,10 @@ def triples2ttls(triples):
                     break
                 elif not nested_target:
                     nested_target = item['subject']
-            ttls.append((subj, pred, create_node(nested_target)))
-            ttls += triples2ttls(obj)
+            graph.add((subj, pred, create_node(nested_target)))
+            [graph.add((s, p, o)) for s, p, o in triples2graph(obj)]
 
-    return ttls
-
-def triples2ttls_old(triples):
-    ttls = []
-    for triple in triples:
-        first_part = "{} {} ".format(triple['subject'], triple['predicate'])
-        if isinstance(triple['object'], str):
-            ttls.append("{}{} .".format(first_part, triple['object']))
-        else:
-            # Look through triple['object'], and if the block is either a reification
-            # or an annotation, switch the subject with the object being annotated/reified, otherwise
-            # leave the subject as is:
-            nested_target = None
-            for item in triple['object']:
-                if item['predicate'] in ['owl:annotatedTarget', 'rdf:object']:
-                    nested_target = item['object']
-                    break
-                elif not nested_target:
-                    nested_target = item['subject']
-
-            ttls.append("{}{} .".format(first_part, nested_target))
-            ttls += triples2ttls(triple['object'])
-
-    return ttls
+    return graph
 
 def thick2obj(thick_row):
     log("In thick2obj. Received thick_row: {}".format(thick_row))
@@ -594,9 +593,27 @@ if __name__ == "__main__":
     print("#############################################")
 
     print("TERSE TRIPLES:")
-    ttls = triples2ttls(triples)
-    render_ttls(ttls)
+    actual = triples2graph(triples)
+    render_graph(actual)
     print("#############################################")
+
+    expected = Graph()
+    expected.parse('obi-core.owl')
+
+    #print(expected.serialize(format="n3").decode("utf-8"))
+
+    #for s, p, o in expected:
+    #    print("{}".format((s, p, o)))
+    #for s, p, o in expected:
+    #    print("{} {} {} .".format(s, p, o))
+
+    #actual = Graph()
+    #for ttl in ttls:
+    #    actual.add(ttl)
+    #print(actual.serialize(format="n3").decode("utf-8"))
+
+
+    
 
     # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)
