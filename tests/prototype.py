@@ -239,7 +239,6 @@ def thick2subjects(thick):
 
 def render_graph(graph):
     ttls = sorted([(s, p, o) for s, p, o in graph])
-    print("{}".format(prefixes))
     def shorten(content):
         if isinstance(content, URIRef):
             m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
