@@ -239,37 +239,52 @@ def thick2subjects(thick):
 
 def render_graph(graph):
     ttls = sorted([(s, p, o) for s, p, o in graph])
+    print("{}".format(prefixes))
+    def shorten(content):
+        if isinstance(content, URIRef):
+            m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
+            if m:
+                for key in prefixes:
+                    if m[1] == prefixes[key]:
+                        return "{}:{}".format(key, m[3])
+        if content.startswith("http"):
+            content = "<{}>".format(content)
+        return content
+
     for subj, pred, obj in ttls:
-        print("{} {} {} .".format(subj, pred, obj))
+        print("{} {} ".format(shorten(subj), shorten(pred)), end="")
+        if isinstance(obj, Literal) and obj.datatype:
+            print('"{}"^^{} '.format(obj.value, shorten(obj.datatype)), end="")
+        elif isinstance(obj, Literal) and obj.language:
+            print('"{}"@{} '.format(obj.value, obj.language), end="")
+        else:
+            print("{} ".format(shorten(obj)), end="")
+        print(".")
 
 def deprefix(content):
     m = re.compile(r"([\w\-]+):(.*)").match(content)
     if m and prefixes.get(m[1]):
-        return URIRef("{}{}".format(prefixes[m[1]], m[2]))
+        return "{}{}".format(prefixes[m[1]], m[2])
 
 def create_node(content):
-    if content.startswith('_:'):
+    if isinstance(content, str) and content.startswith('_:'):
         return BNode(content)
-    elif content.startswith('<'):
+    elif isinstance(content, str) and content.startswith('<'):
         return URIRef(content.strip('<>'))
-    else:
+    elif isinstance(content, str):
         deprefixed_content = deprefix(content)
-        if deprefixed_content:
-            return deprefixed_content
+        return URIRef(deprefixed_content) if deprefixed_content else Literal(content)
+    else:
+        if isinstance(content, dict) and 'value' in content and 'language' in content:
+            return Literal(content['value'], lang=content['language'])
+        elif isinstance(content, dict) and 'value' in content and 'datatype' in content:
+            deprefixed_datatype = deprefix(content['datatype'])
+            datatype = URIRef(content['datatype']) if not deprefixed_datatype \
+                else URIRef(deprefixed_datatype)
+            return(Literal(content['value'], datatype=datatype))
         else:
-            items = content.split('\"@') if content.startswith('"') else content.split('@')
-            if len(items) == 2:
-                literal = Literal(items[0], lang=items[1])
-                print("{}".format((literal, 'dummy')))
-                return literal
-            items = content.split('\"^^') if content.startswith('"') else content.split('^^')
-            if len(items) == 2:
-                datatype = deprefix(items[1])
-                datatype = URIRef(items[1]) if not datatype else datatype
-                literal = Literal(items[0], datatype=datatype)
-                print("{}".format((literal, 'dummy')))
-                return literal
-            return Literal(content)
+            log("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
+            return Literal(format(content))
 
 def triples2graph(triples):
     graph = Graph()
@@ -277,7 +292,7 @@ def triples2graph(triples):
         subj = create_node(triple['subject'])
         pred = create_node(triple['predicate'])
         obj = triple['object']
-        if isinstance(obj, str):
+        if isinstance(obj, str) or isinstance(obj, dict):
             graph.add((subj, pred, create_node(obj)))
         else:
             # Look through triple['object'], and if the block is either a reification
@@ -321,7 +336,7 @@ def thick2obj(thick_row):
             target[key] = thick_row['metadata'][key]
         return target
 
-    if "object" in thick_row:
+    def obj2obj(thick_row):
         target = thick_row['object']
         triples = []
         if 'annotations' not in thick_row and 'metadata' not in thick_row:
@@ -332,15 +347,16 @@ def thick2obj(thick_row):
                 triples += predicateMap2triples(decompress_annotation(target, 'object'))
             if 'metadata' in thick_row:
                 triples += predicateMap2triples(decompress_reification(target, 'object'))
-    elif 'value' in thick_row:
+        return target if not triples else triples
+
+    def val2obj(thick_row):
         target = thick_row['value']
+        value_obj = {}
         triples = []
         if 'datatype' in thick_row:
-            target = '"{}"^^{}'.format(target, thick_row['datatype'])
+            value_obj = {'value': target, 'datatype': thick_row['datatype']}
         elif 'language' in thick_row:
-            target = '"{}"@{}'.format(target, thick_row['language'])
-        else:
-            target = '{}'.format(target)
+            value_obj = {'value': target, 'language': thick_row['language']}
 
         if 'annotations' not in thick_row and 'metadata' not in thick_row:
             if not isinstance(target, str):
@@ -350,8 +366,12 @@ def thick2obj(thick_row):
                 triples += predicateMap2triples(decompress_annotation(target, 'value'))
             if 'metadata' in thick_row:
                 triples += predicateMap2triples(decompress_reification(target, 'value'))
+        return triples or value_obj or target
 
-    return target if not triples else triples
+    if "object" in thick_row:
+        return obj2obj(thick_row)
+    elif 'value' in thick_row:
+        return val2obj(thick_row)
 
 b = 0
 def predicateMap2triples(pred_map):
@@ -588,11 +608,11 @@ if __name__ == "__main__":
     print("#############################################")
 
     triples = thick2triples(thick)
-    print("TRIPLES:")
+    print("INTERIM TRIPLES:")
     print(pformat(triples))
     print("#############################################")
 
-    print("TERSE TRIPLES:")
+    print("TRIPLES:")
     actual = triples2graph(triples)
     render_graph(actual)
     print("#############################################")
