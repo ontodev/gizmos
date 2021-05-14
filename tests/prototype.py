@@ -11,6 +11,8 @@ from gizmos.hiccup import render
 from pprint import pformat
 from rdflib import Graph, BNode, URIRef, Literal
 
+from util import compare_graphs
+
 DEBUG=True
 def log(message):
     if DEBUG:
@@ -592,47 +594,50 @@ if __name__ == "__main__":
     [log(row) for row in thin]
 
     subjects = thin2subjects(thin)
-    print("SUBJECTS:")
-    print(pformat(subjects))
+    #print("SUBJECTS:")
+    #print(pformat(subjects))
     #renderSubjects(subjects)
-    print("#############################################")
+    #print("#############################################")
 
     thick = subjects2thick(subjects)
-    print("THICK ROWS:")
-    [print(row) for row in thick]
-    print("#############################################")
+    #print("THICK ROWS:")
+    #[print(row) for row in thick]
+    #print("#############################################")
 
-    print("PREFIXES:")
-    print(pformat(prefixes))
-    print("#############################################")
+    #print("PREFIXES:")
+    #print(pformat(prefixes))
+    #print("#############################################")
 
     triples = thick2triples(thick)
-    print("INTERIM TRIPLES:")
-    print(pformat(triples))
-    print("#############################################")
+    #print("INTERIM TRIPLES:")
+    #print(pformat(triples))
+    #print("#############################################")
 
-    print("TRIPLES:")
     actual = triples2graph(triples)
-    render_graph(actual)
-    print("#############################################")
+    #print("TRIPLES:")
+    #render_graph(actual)
+    #print("#############################################")
 
     expected = Graph()
-    expected.parse('obi-core.owl')
+    expected.parse('example.rdf')
 
+    #print("EXPECTED:")
     #print(expected.serialize(format="n3").decode("utf-8"))
-
     #for s, p, o in expected:
     #    print("{}".format((s, p, o)))
-    #for s, p, o in expected:
-    #    print("{} {} {} .".format(s, p, o))
-
-    #actual = Graph()
-    #for ttl in ttls:
-    #    actual.add(ttl)
+    #print("ACTUAL:")
     #print(actual.serialize(format="n3").decode("utf-8"))
+    #for s, p, o in actual:
+    #    print("{}".format((s, p, o)))
 
-
-    
+    print("COMPARING GRAPHS:")
+    try:
+        compare_graphs(actual, expected)
+    except AssertionError as e:
+        print("Graphs are not identical")
+    else:
+        print("Graphs are identical")
+  
 
     # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)
