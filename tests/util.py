@@ -21,14 +21,17 @@ test_conn = {"host": POSTGRES_HOST, "database": "gizmos_test", "user": POSTGRES_
 def dump_ttl_sorted(graph):
     for line in sorted(graph.serialize(format="ttl").splitlines()):
         if line:
-            print(line.decode("ascii"))
+            try:
+                print(line.decode("ascii"))
+            except UnicodeDecodeError:
+                print(line)
 
 
-def compare_graphs(actual, expected):
+def compare_graphs(actual, expected, show_diff=True):
     actual_iso = to_isomorphic(actual)
     expected_iso = to_isomorphic(expected)
 
-    if actual_iso != expected_iso:
+    if show_diff and (actual_iso != expected_iso):
         _, in_first, in_second = graph_diff(actual_iso, expected_iso)
         print("The actual and expected graphs differ")
         print("----- Contents of actual graph not in expected graph -----")

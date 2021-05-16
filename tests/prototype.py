@@ -6,6 +6,7 @@ import re
 import sqlite3
 import sys
 
+from argparse import ArgumentParser
 from copy import deepcopy
 from gizmos.hiccup import render
 from pprint import pformat
@@ -13,21 +14,22 @@ from rdflib import Graph, BNode, URIRef, Literal
 
 from util import compare_graphs
 
-DEBUG=True
-def log(message):
-    if DEBUG:
-        print(message, file=sys.stderr)
+#TSV = "tests/thin.tsv"
+#EXPECTED_OWL = 'example.rdf'
+TSV = "build/obi_core.tsv"
+EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
 
 prefixes = {}
-with open("tests/prefix.tsv") as fh:
+with open("tests/resources/prefix.tsv") as fh:
     rows = csv.DictReader(fh, delimiter="\t")
     for row in rows:
         if row.get("prefix"):
             prefixes[row["prefix"]] = row["base"]
 
-with open("tests/thin.tsv") as fh:
-#with open("obi-complete.tsv") as fh:
-    thin = list(csv.DictReader(fh, delimiter="\t"))
+DEBUG = True
+def log(message):
+    if DEBUG:
+        print(message, file=sys.stderr)
 
 # def dict_factory(cursor, row):
 #     d = {}
@@ -239,7 +241,7 @@ def thick2subjects(thick):
 
 ### thick to Turtle
 
-def render_graph(graph):
+def render_graph(graph, fh=sys.stdout):
     ttls = sorted([(s, p, o) for s, p, o in graph])
     def shorten(content):
         if isinstance(content, URIRef):
@@ -253,14 +255,14 @@ def render_graph(graph):
         return content
 
     for subj, pred, obj in ttls:
-        print("{} {} ".format(shorten(subj), shorten(pred)), end="")
+        print("{} {} ".format(shorten(subj), shorten(pred)), end="", file=fh)
         if isinstance(obj, Literal) and obj.datatype:
-            print('"{}"^^{} '.format(obj.value, shorten(obj.datatype)), end="")
+            print('"{}"^^{} '.format(obj.value, shorten(obj.datatype)), end="", file=fh)
         elif isinstance(obj, Literal) and obj.language:
-            print('"{}"@{} '.format(obj.value, obj.language), end="")
+            print('"{}"@{} '.format(obj.value, obj.language), end="", file=fh)
         else:
-            print("{} ".format(shorten(obj)), end="")
-        print(".")
+            print("{} ".format(shorten(obj)), end="", file=fh)
+        print(".", file=fh)
 
 def deprefix(content):
     m = re.compile(r"([\w\-]+):(.*)").match(content)
@@ -306,6 +308,7 @@ def triples2graph(triples):
                     break
                 elif not nested_target:
                     nested_target = item['subject']
+
             graph.add((subj, pred, create_node(nested_target)))
             [graph.add((s, p, o)) for s, p, o in triples2graph(obj)]
 
@@ -317,7 +320,12 @@ def thick2obj(thick_row):
     if 'object' not in thick_row and 'value' not in thick_row:
         raise Exception(f"Don't know how to handle thick_row without value or object: {thick_row}")
 
-    def decompress_annotation(target, kind):
+    def decompress_annotation(thick_row, target, kind):
+        print("In decompress_annotation. Got thick_row:\n{}".format(pformat(thick_row)))
+        print("........................")
+        print("And got target:\n{}".format(pformat(target)))
+        print("------------------------")
+
         if isinstance(target, str):
             target = {'owl:annotatedTarget': [{kind: target}]}
         target['owl:annotatedSource'] = [{'object': thick_row['subject']}]
@@ -327,7 +335,7 @@ def thick2obj(thick_row):
             target[key] = thick_row['annotations'][key]
         return target
 
-    def decompress_reification(target, kind):
+    def decompress_reification(thick_row, target, kind):
         if isinstance(target, str):
             target = {'rdf:object': [{kind: target}]}
         target['rdf:subject'] = [{'object': thick_row['subject']}]
@@ -345,9 +353,9 @@ def thick2obj(thick_row):
                 triples = predicateMap2triples(target)
         else:
             if 'annotations' in thick_row:
-                triples += predicateMap2triples(decompress_annotation(target, 'object'))
+                triples += predicateMap2triples(decompress_annotation(thick_row, target, 'object'))
             if 'metadata' in thick_row:
-                triples += predicateMap2triples(decompress_reification(target, 'object'))
+                triples += predicateMap2triples(decompress_reification(thick_row, target, 'object'))
         return target if not triples else triples
 
     def val2obj(thick_row):
@@ -364,9 +372,9 @@ def thick2obj(thick_row):
                 triples = predicateMap2triples(target)
         else:
             if 'annotations' in thick_row:
-                triples += predicateMap2triples(decompress_annotation(target, 'value'))
+                triples += predicateMap2triples(decompress_annotation(thick_row, target, 'value'))
             if 'metadata' in thick_row:
-                triples += predicateMap2triples(decompress_reification(target, 'value'))
+                triples += predicateMap2triples(decompress_reification(thick_row, target, 'value'))
         return triples or value_obj or target
 
     if "object" in thick_row:
@@ -374,13 +382,13 @@ def thick2obj(thick_row):
     elif 'value' in thick_row:
         return val2obj(thick_row)
 
-b = 0
+b_id = 0
 def predicateMap2triples(pred_map):
-    global b
-    b += 1
+    global b_id
+    b_id += 1
     log("In predicateMap2triples. Received: {}".format(pred_map))
 
-    bnode = f"_:myb{b}"
+    bnode = f"_:myb{b_id}"
     triples = []
     for predicate, objects in pred_map.items():
         for obj in objects:
@@ -397,6 +405,12 @@ def thick2triples(thick_rows):
             if isinstance(o, str) and o.startswith("{"):
                 row["object"] = json.loads(o)
 
+        # TODO: Make it such that `thick2obj` returns a list of no less than one and no more than
+        # three triples: One for the original target, one for the annotations (if any), and one
+        # for the metadata (if any). Then append them all to `triples`.
+        # Note also that when the target is complex, EACH of annotations and metadata should
+        # have an annotatedTarget pointing to a DUPLICATE of the target, with a new blank node id.
+        # See thins.txt in the build/thick2triplesReports/ directory.
         obj = thick2obj(row)
         triples.append({'subject': row['subject'], 'predicate': row['predicate'], 'object': obj})
     return triples
@@ -587,57 +601,64 @@ def subjects2rdfa(labels, subjects):
 
 
 if __name__ == "__main__":
-    rdfList = {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'A'}], 'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'B'}], 'rdf:rest': [{'object': 'rdf:nil'}]}}]}
+    p = ArgumentParser("prototype.py", description="First pass at thick triples prototype")
+    p.add_argument("-f", "--filter", nargs="+", default=[],
+                   help="filter only on the given comma-separated list of stanzas")
+    args = p.parse_args()
+
+    rdfList = {'rdf:type': [{'object': 'rdf:List'}],
+               'rdf:first': [{'value': 'A'}],
+               'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}],
+                                        'rdf:first': [{'value': 'B'}],
+                                        'rdf:rest': [{'object': 'rdf:nil'}]}}]}
     log("List {}".format(rdf2ofs(rdfList)))
 
+    with open(TSV) as fh:
+        thin = list(csv.DictReader(fh, delimiter="\t"))
+    if args.filter:
+        thin = [row for row in thin if row['stanza'] in args.filter]
+    if not thin:
+        print("No stanzas corresponding to {} in db".format(', '.join(args.filter)))
+        sys.exit(1)
+
     log("THIN ROWS:")
-    [log(row) for row in thin]
+    [log(pformat(row)) for row in thin]
 
     subjects = thin2subjects(thin)
-    #print("SUBJECTS:")
-    #print(pformat(subjects))
-    #renderSubjects(subjects)
-    #print("#############################################")
+    with open("build/subjects.json", "w") as fh:
+        print(pformat(subjects), file=fh)
+    ##renderSubjects(subjects)
 
     thick = subjects2thick(subjects)
-    #print("THICK ROWS:")
-    #[print(row) for row in thick]
-    #print("#############################################")
+    with open("build/thick_rows.json", "w") as fh:
+        [print(pformat(row), file=fh) for row in thick]
 
-    #print("PREFIXES:")
-    #print(pformat(prefixes))
-    #print("#############################################")
+    with open("build/prefixes.json", "w") as fh:
+        print(pformat(prefixes), file=fh)
 
     triples = thick2triples(thick)
-    #print("INTERIM TRIPLES:")
-    #print(pformat(triples))
-    #print("#############################################")
+    with open("build/triples.json", "w") as fh:
+        print(pformat(triples), file=fh)
 
     actual = triples2graph(triples)
-    #print("TRIPLES:")
-    #render_graph(actual)
-    #print("#############################################")
+    with open("build/triples.n3", "w") as fh:
+        render_graph(actual, fh)
 
     expected = Graph()
-    expected.parse('example.rdf')
+    expected.parse(EXPECTED_OWL)
 
-    #print("EXPECTED:")
-    #print(expected.serialize(format="n3").decode("utf-8"))
-    #for s, p, o in expected:
-    #    print("{}".format((s, p, o)))
-    #print("ACTUAL:")
-    #print(actual.serialize(format="n3").decode("utf-8"))
-    #for s, p, o in actual:
-    #    print("{}".format((s, p, o)))
+    with open("build/expected.ttl", "w") as fh:
+        print(expected.serialize(format="n3").decode("utf-8"), file=fh)
+    with open("build/actual.ttl", "w") as fh:
+        print(actual.serialize(format="n3").decode("utf-8"), file=fh)
 
-    print("COMPARING GRAPHS:")
+    print("Comparing graphs:")
     try:
-        compare_graphs(actual, expected)
+        compare_graphs(actual, expected, False)
     except AssertionError as e:
         print("Graphs are not identical")
     else:
         print("Graphs are identical")
-  
 
     # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)
