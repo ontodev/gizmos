@@ -14,10 +14,10 @@ from rdflib import Graph, BNode, URIRef, Literal
 
 from util import compare_graphs
 
-TSV = "tests/thin.tsv"
-EXPECTED_OWL = 'example.rdf'
-#TSV = "build/obi_core.tsv"
-#EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
+#TSV = "tests/thin.tsv"
+#EXPECTED_OWL = 'example.rdf'
+TSV = "build/obi_core.tsv"
+EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
 
 prefixes = {}
 with open("tests/resources/prefix.tsv") as fh:
@@ -31,8 +31,12 @@ def debug(message):
     if LOG_LEVEL in "debug":
         print(message, file=sys.stderr)
 
+nesting = 0
 def info(message):
+    global nesting
     if LOG_LEVEL in ("debug", "info"):
+        message = message.replace('\n', '\n' + '    '*nesting)
+        print('    '*nesting, end='', file=sys.stderr)
         print(message, file=sys.stderr)
 
 # def dict_factory(cursor, row):
@@ -282,13 +286,13 @@ def create_node(content):
         deprefixed_content = deprefix(content)
         return URIRef(deprefixed_content) if deprefixed_content else Literal(content)
     else:
-        if isinstance(content, dict) and 'value' in content and 'language' in content:
-            return Literal(content['value'], lang=content['language'])
-        elif isinstance(content, dict) and 'value' in content and 'datatype' in content:
+        if isinstance(content, dict) and 'value_mart' in content and 'language' in content:
+            return Literal(content['value_mart'], lang=content['language'])
+        elif isinstance(content, dict) and 'value_mart' in content and 'datatype' in content:
             deprefixed_datatype = deprefix(content['datatype'])
             datatype = URIRef(content['datatype']) if not deprefixed_datatype \
                 else URIRef(deprefixed_datatype)
-            return(Literal(content['value'], datatype=datatype))
+            return(Literal(content['value_mart'], datatype=datatype))
         else:
             debug("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
             return Literal(format(content))
@@ -319,57 +323,86 @@ def triples2graph(triples):
     return graph
 
 b_id = 0
-def thick2obj(thick_row):
-    debug("In thick2obj. Received thick_row: {}".format(thick_row))
+def thick2triples(_subject, _predicate, _thick_row):
+    global nesting
+    nesting += 1
+    info("Entering thick2triples")
+    debug("In thick2triples. Received thick_row:\n{}".format(pformat(_thick_row)))
 
-    if 'object' not in thick_row and 'value' not in thick_row:
-        raise Exception(f"Don't know how to handle thick_row without value or object: {thick_row}")
+    if 'object' not in _thick_row and 'value' not in _thick_row:
+        raise Exception(f"Don't know how to handle thick_row without value or object: {_thick_row}")
+
+    def flatten(triples):
+        global nesting
+        nesting += 1
+        #info("TRIPLES TO BE FLATTENED:\n{}".format(pformat(triples)))
+        nesting -= 1
+        return triples
 
     def predicateMap2triples(pred_map):
+        global nesting
+        nesting += 1
+        info("Entering predicateMap2triples")
         global b_id
         b_id += 1
         debug("In predicateMap2triples. Received: {}".format(pred_map))
+
+        info("Predicate Map is:\n{}".format(pformat(pred_map)))
     
         bnode = f"_:myb{b_id}"
         triples = []
         for predicate, objects in pred_map.items():
             for obj in objects:
-                obj = thick2obj(obj)
-                if 'annotations' in obj or 'metadata' in obj:
-                    obj = obj.get('annotations', []) + obj.get('metadata', [])
-                else:
-                    obj = obj['target']
-                triples.append({'subject': bnode, 'predicate': predicate, 'object': obj})
+                info("Processing object ({}):\n{}".format(predicate, pformat(obj)))
+                triples += thick2triples(bnode, predicate, obj)
+        info("TRIPLES\n{}".format(pformat(triples)))
+        info("Exiting predicateMap2triples")
+        nesting -= 1
         return triples
 
     def decompress_annotation(thick_row, target, kind):
-        info("In decompress_annotation. Got thick_row:\n{}".format(pformat(thick_row)))
-        info("........................")
-
+        global nesting
+        nesting += 1
+        info("Entering decompress_annotation")
         if isinstance(target, str):
-            target = {'owl:annotatedTarget': [{kind: target}]}
-        target['owl:annotatedSource'] = [{'object': thick_row['subject']}]
-        target['owl:annotatedProperty'] = [{'object': thick_row['predicate']}]
-        target['rdf:type'] = [{'object': 'owl:Axiom'}]
-        for key in thick_row['annotations']:
-            target[key] = thick_row['annotations'][key]
-        return target
+            annotations = {'owl:annotatedTarget': [{kind: target}]}
+        else:
+            annotations = {'owl:annotatedTarget': [{kind: predicateMap2triples(target)}]}
 
-    def decompress_reification(thick_row, target, kind):
+        annotations['owl:annotatedSource'] = [{'object': thick_row['subject']}]
+        annotations['owl:annotatedProperty'] = [{'object': thick_row['predicate']}]
+        annotations['rdf:type'] = [{'object': 'owl:Axiom'}]
+        for key in thick_row['annotations']:
+            annotations[key] = thick_row['annotations'][key]
+        info("ANNOTATIONS:\n{}".format(pformat(annotations)))
+        info("Exiting decompress_annotation")
+        nesting -= 1
+        return annotations
+
+    def decompress_metadata(thick_row, target, kind):
+        global nesting
+        nesting += 1
+        info("Entering decompress_metadata")
         if isinstance(target, str):
-            target = {'rdf:object': [{kind: target}]}
-        target['rdf:subject'] = [{'object': thick_row['subject']}]
-        target['rdf:predicate'] = [{'object': thick_row['predicate']}]
-        target['rdf:type'] = [{'object': 'rdf:Statement'}]
-        for key in thick_row['annotations']:
-            target[key] = thick_row['metadata'][key]
-        return target
+            metadata = {'rdf:object': [{kind: target}]}
+        else:
+            metadata = {'rdf:object': [{kind: predicateMap2triples(target)}]}
 
-    def obj2obj(thick_row):
+        metadata['rdf:subject'] = [{'object': thick_row['subject']}]
+        metadata['rdf:predicate'] = [{'object': thick_row['predicate']}]
+        metadata['rdf:type'] = [{'object': 'owl:Axiom'}]
+        for key in thick_row['metadata']:
+            metadata[key] = thick_row['metadata'][key]
+        info("Exiting decompress_metadata")
+        nesting -= 1
+        return metadata
+
+    def obj2triples(thick_row):
         # TODO: In the case of a structured target object, we want (always):
         # 1) A triple corresponding to the "no annotations or metadata" case below. The object of
         #    this triple is a blank node that is the subject of the further set of triples generated
-        #    by predicateMap2triples(). I think this case is already implemented.
+        #    by predicateMap2triples(). I think this case is already implemented. It corresponds to
+        #    line 19 in thins.txt and the further set of triples corresponds to lines 20--22.
         # 2) An independent set of triples corresponding to the annotations. ("Independent" here
         #    means that the subject of these triples (a blank node) is not the object of any other
         #    triple in the stanza.) We will generate this set of triples as follows:
@@ -382,66 +415,97 @@ def thick2obj(thick_row):
         #      different blank subject id) of the set of triples generated in 1).
         # 3) An independent set of triples corresponding to the metadata, generated using the same
         #    logic as in 2).
-        #
-        # Each of 1), 2), and 3) should be included as keys in a map that will be returned
+        global nesting
+        nesting += 1
+        info("Entering obj2triples")
+        info("Got thick row:\n{}".format(pformat(thick_row)))
+        target = thick_row['object']
 
-        target_obj = thick_row['object']
-        obj = {'target': target_obj}
-        if 'annotations' not in thick_row and 'metadata' not in thick_row:
-            if not isinstance(target_obj, str):
-                obj['target'] = predicateMap2triples(target_obj)
-                info("Target (no annotations or metadata case):\n{}".format(pformat(obj['target'])))
+        triples = []
+        info("Looking for the main set of triples ...")
+        if isinstance(target, list):
+            for t in target:
+                triples += thick2triples(t['subject'], t['predicate'], t)
+        elif not isinstance(target, str):
+            triples += predicateMap2triples(target)
         else:
-            info("Target:\n{}".format(pformat(obj['target'])))
-            if 'annotations' in thick_row:
-                obj['annotations'] = predicateMap2triples(
-                    decompress_annotation(thick_row, target_obj, 'object'))
-                info("Annotations:\n{}".format(pformat(obj['annotations'])))
-            if 'metadata' in thick_row:
-                obj['metadata'] = predicateMap2triples(
-                    decompress_reification(thick_row, target_obj, 'object'))
-                info("Metadata:\n{}".format(pformat(obj['metadata'])))
-        return obj
+            triples.append({'subject': _subject, 'predicate': _predicate, 'object': target})
 
-    def val2obj(thick_row):
-        target_val = thick_row['value']
-        obj = {'target': target_val}
+        info("Triples are now:\n{}".format(pformat(triples)))
+
+        info("Looking for annotations ...")
+        if 'annotations' in thick_row:
+            annotations = decompress_annotation(thick_row, thick_row['object'], 'object')
+            annotations = predicateMap2triples(annotations)
+            triples += annotations
+        info("Triples are now:\n{}".format(pformat(triples)))
+
+        info("Looking for metadata ...")
+        if 'metadata' in thick_row:
+            metadata = decompress_metadata(thick_row, thick_row['object'], 'object')
+            metadata = predicateMap2triples(metadata)
+            triples += metadata
+        info("Triples are now:\n{}".format(pformat(triples)))
+
+        triples = flatten(triples)
+        info("Exiting obj2triples")
+        nesting -= 1
+        return triples
+
+    def val2triples(thick_row):
+        global nesting
+        nesting += 1
+        info("Entering val2triples")
+        target = value = thick_row['value']
         if 'datatype' in thick_row:
-            obj['target'] = {'value': target_val, 'datatype': thick_row['datatype']}
+            target = {'value_mart': value, 'datatype': thick_row['datatype']}
         elif 'language' in thick_row:
-            obj['target'] = {'value': target_val, 'language': thick_row['language']}
+            target = {'value_mart': value, 'language': thick_row['language']}
 
-        if 'annotations' not in thick_row and 'metadata' not in thick_row:
-            if not isinstance(target_val, str):
-                obj['target'] = predicateMap2triples(target_val)
-        else:
-            if 'annotations' in thick_row:
-                obj['annotations'] = predicateMap2triples(
-                    decompress_annotation(thick_row, target_val, 'value'))
-            if 'metadata' in thick_row:
-                obj['metadata'] = predicateMap2triples(
-                    decompress_reification(thick_row, target_val, 'value'))
-        return obj
+        triples = [{'subject': _subject, 'predicate': _predicate, 'object': target}]
 
-    if "object" in thick_row:
-        return obj2obj(thick_row)
-    elif 'value' in thick_row:
-        return val2obj(thick_row)
+        if 'annotations' in thick_row:
+            annotations = decompress_annotation(thick_row, value, 'value')
+            annotations = predicateMap2triples(annotations)
+            triples += annotations
 
-def thick2triples(thick_rows):
-    debug("In thick2triples. Received thick_rows: {}".format(thick_rows))
+        if 'metadata' in thick_row:
+            metadata = decompress_metadata(thick_row, value, 'value')
+            metadata = predicateMap2triples(metadata)
+            triples += metadata
+
+        triples = flatten(triples)
+        info("Exiting val2triples")
+        nesting -= 1
+        return triples
+
+    if "object" in _thick_row:
+        triples = obj2triples(_thick_row)
+        triples = flatten(triples)
+        info("Exiting thick2triples")
+        nesting -= 1
+        return triples
+        #return obj2triples(_thick_row)
+    elif 'value' in _thick_row:
+        triples = val2triples(_thick_row)
+        triples = flatten(triples)
+        info("Exiting thick2triples")
+        nesting -= 1
+        return triples
+        #return val2triples(_thick_row)
+
+def thicks2triples(thick_rows):
+    debug("In thicks2triples. Received thick_rows: {}".format(thick_rows))
+    info("Entering thicks2triples")
     triples = []
     for row in thick_rows:
         if "object" in row:
             o = row["object"]
             if isinstance(o, str) and o.startswith("{"):
                 row["object"] = json.loads(o)
-        obj = thick2obj(row)
-        if 'annotations' in obj or 'metadata' in obj:
-            obj = obj.get('annotations', []) + obj.get('metadata', [])
-        else:
-            obj = obj['target']
-        triples.append({'subject': row['subject'], 'predicate': row['predicate'], 'object': obj})
+        triples += thick2triples(row['subject'], row['predicate'], row)
+
+    info("Exiting thicks2triples")
     return triples
 
 owlTypes = ["owl:Restriction"]
@@ -665,7 +729,7 @@ if __name__ == "__main__":
     with open("build/prefixes.json", "w") as fh:
         print(pformat(prefixes), file=fh)
 
-    triples = thick2triples(thick)
+    triples = thicks2triples(thick)
     with open("build/triples.json", "w") as fh:
         print(pformat(triples), file=fh)
 
