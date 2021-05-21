@@ -1,0 +1,8 @@
+subject	predicate	object	value	datatype	language	annotations	metadata
+ex:foo	rdfs:label		Foo				
+ex:foo	rdfs:label		Fou		fr		
+ex:foo	ex:size		123	xsd:int			
+ex:foo	ex:link	<https://example.com/foo>				"{""rdfs:comment"":[{""value"":""OWL axiom annotation"",""language"":""en""}]}"	"{""rdfs:comment"":[{""value"":""RDF metadata"",""language"":""en""}]}"
+ex:foo	rdf:type	owl:Class					
+ex:foo	rdfs:subClassOf	"{""rdf:type"":[{""object"":""owl:Restriction""}],""owl:onProperty"":[{""object"":""ex:part-of""}],""owl:someValuesFrom"":[{""object"":""ex:bar""}]}"					
+ex:foo	ex:items	"[{""value"":""A""},{""value"":""B""}]"					
