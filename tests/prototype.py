@@ -388,10 +388,11 @@ def thick2triples(_subject, _predicate, _thick_row):
 
         annodata[annodata_subj] = [{'object': thick_row['subject']}]
         annodata[annodata_pred] = [{'object': thick_row['predicate']}]
-        annodata['rdf:type'] = [{'object': 'owl:Axiom'}]
+        object_type = 'owl:Axiom' if decomp_type == 'annotations' else 'rdf:Statement'
+        annodata['rdf:type'] = [{'object': object_type}]
         for key in thick_row[decomp_type]:
             annodata[key] = thick_row[decomp_type][key]
-        info("ANNODATA:\n{}".format(pformat(annodata)))
+        info("ANNOTATIONS / METADATA:\n{}".format(pformat(annodata)))
         info("Exiting decompress_annotation")
         nesting -= 1
         return annodata
@@ -415,22 +416,37 @@ def thick2triples(_subject, _predicate, _thick_row):
         # 3) An independent set of triples corresponding to the metadata, generated using the same
         #    logic as in 2).
         global nesting
+        global b_id
         nesting += 1
         info("Entering obj2triples")
         info("Got thick row:\n{}".format(pformat(thick_row)))
         target = thick_row['object']
 
         triples = []
-        info("Looking for the main set of triples ...")
+        info("Generating the main set of triples ...")
         if isinstance(target, list):
             for t in target:
                 triples += thick2triples(t['subject'], t['predicate'], t)
+            # TODO: This is extremely hacky but it should work because of the order in which the ids
+            # are generated here. See also the similar comment below. In that case ids are generated
+            # in ascending order.
+            next_id = b_id - 1
+            #if _predicate in ['owl:annotatedTarget', 'rdf:object']:
+            triples.append({'subject': _subject,
+                            'predicate': _predicate,
+                            'object': f"_:myb{next_id}"})
         elif not isinstance(target, str):
+            # TODO: This is a hacky way of doing this, but the logic is right. We need to save
+            # the b_id here because predicateMap2Triples is a recursive function and it will
+            # increment the b_id every time it is called. What we need here is just whatever the
+            # next id will be.
+            next_id = b_id + 1
             triples += predicateMap2triples(target)
+            triples.append({'subject': _subject, 'predicate': _predicate, 'object': f"_:myb{next_id}"})
         else:
             triples.append({'subject': _subject, 'predicate': _predicate, 'object': target})
 
-        info("Triples are now:\n{}".format(pformat(triples)))
+        info("Triples are initially:\n{}".format(pformat(triples)))
 
         info("Looking for annotations ...")
         if 'annotations' in thick_row:
@@ -438,14 +454,14 @@ def thick2triples(_subject, _predicate, _thick_row):
             annotations = predicateMap2triples(annotations)
             triples += annotations
 
-        info("Triples are now:\n{}".format(pformat(triples)))
-
         info("Looking for metadata ...")
         if 'metadata' in thick_row:
             metadata = decompress(thick_row, thick_row['object'], 'object', 'metadata')
             metadata = predicateMap2triples(metadata)
             triples += metadata
-        info("Triples are now:\n{}".format(pformat(triples)))
+
+        if 'metadata' in thick_row or 'annotations' in thick_row:
+            info("Triples are now:\n{}".format(pformat(triples)))
 
         triples = flatten(triples)
         info("Exiting obj2triples")
@@ -710,6 +726,9 @@ if __name__ == "__main__":
         thin = list(csv.DictReader(fh, delimiter="\t"))
     if args.filter:
         pruned_thin = [row for row in thin if row['stanza'] in args.filter]
+    else:
+        pruned_thin = []
+
     if not pruned_thin:
         print("WARNING No stanzas corresponding to {} in db".format(', '.join(args.filter)))
     thin = thin if not pruned_thin else pruned_thin
@@ -747,7 +766,7 @@ if __name__ == "__main__":
 
     print("Comparing graphs:")
     try:
-        compare_graphs(actual, expected, False)
+        compare_graphs(actual, expected, True)
     except AssertionError as e:
         print("Graphs are not identical")
     else:
