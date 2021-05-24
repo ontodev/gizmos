@@ -303,22 +303,7 @@ def triples2graph(triples):
         subj = create_node(triple['subject'])
         pred = create_node(triple['predicate'])
         obj = triple['object']
-        if isinstance(obj, str) or isinstance(obj, dict):
-            graph.add((subj, pred, create_node(obj)))
-        else:
-            # Look through triple['object'], and if the block is either a reification
-            # or an annotation, switch the subject with the object being annotated/reified, otherwise
-            # leave the subject as is:
-            nested_target = None
-            for item in obj:
-                if item['predicate'] in ['owl:annotatedTarget', 'rdf:object']:
-                    nested_target = item['object']
-                    break
-                elif not nested_target:
-                    nested_target = item['subject']
-
-            graph.add((subj, pred, create_node(nested_target)))
-            [graph.add((s, p, o)) for s, p, o in triples2graph(obj)]
+        graph.add((subj, pred, create_node(obj)))
 
     return graph
 
@@ -766,7 +751,7 @@ if __name__ == "__main__":
 
     print("Comparing graphs:")
     try:
-        compare_graphs(actual, expected, True)
+        compare_graphs(actual, expected, False)
     except AssertionError as e:
         print("Graphs are not identical")
     else:
