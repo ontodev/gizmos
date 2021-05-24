@@ -297,13 +297,11 @@ def create_node(content):
             debug("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
             return Literal(format(content))
 
+# TODO: this function has become so small that we don't really need it anymore.
 def triples2graph(triples):
     graph = Graph()
     for triple in triples:
-        subj = create_node(triple['subject'])
-        pred = create_node(triple['predicate'])
-        obj = triple['object']
-        graph.add((subj, pred, create_node(obj)))
+        graph.add((triple['subject'], triple['predicate'], triple['object']))
 
     return graph
 
@@ -366,7 +364,7 @@ def thick2triples(_subject, _predicate, _thick_row):
         annodata_pred = spo_mappings[decomp_type]['predicate']
         annodata_obj = spo_mappings[decomp_type]['object']
 
-        if isinstance(target, str):
+        if isinstance(target, str) or 'value' in target:
             annodata = {annodata_obj: [{target_type: target}]}
         else:
             annodata = {annodata_obj: [{target_type: predicateMap2triples(target)}]}
@@ -417,9 +415,9 @@ def thick2triples(_subject, _predicate, _thick_row):
             # in ascending order.
             next_id = b_id - 1
             #if _predicate in ['owl:annotatedTarget', 'rdf:object']:
-            triples.append({'subject': _subject,
-                            'predicate': _predicate,
-                            'object': f"_:myb{next_id}"})
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(f"_:myb{next_id}")})
         elif not isinstance(target, str):
             # TODO: This is a hacky way of doing this, but the logic is right. We need to save
             # the b_id here because predicateMap2Triples is a recursive function and it will
@@ -427,21 +425,25 @@ def thick2triples(_subject, _predicate, _thick_row):
             # next id will be.
             next_id = b_id + 1
             triples += predicateMap2triples(target)
-            triples.append({'subject': _subject, 'predicate': _predicate, 'object': f"_:myb{next_id}"})
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(f"_:myb{next_id}")})
         else:
-            triples.append({'subject': _subject, 'predicate': _predicate, 'object': target})
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(target)})
 
         info("Triples are initially:\n{}".format(pformat(triples)))
 
         info("Looking for annotations ...")
         if 'annotations' in thick_row:
-            annotations = decompress(thick_row, thick_row['object'], 'object', 'annotations')
+            annotations = decompress(thick_row, target, 'object', 'annotations')
             annotations = predicateMap2triples(annotations)
             triples += annotations
 
         info("Looking for metadata ...")
         if 'metadata' in thick_row:
-            metadata = decompress(thick_row, thick_row['object'], 'object', 'metadata')
+            metadata = decompress(thick_row, target, 'object', 'metadata')
             metadata = predicateMap2triples(metadata)
             triples += metadata
 
@@ -457,21 +459,26 @@ def thick2triples(_subject, _predicate, _thick_row):
         global nesting
         nesting += 1
         info("Entering val2triples")
+        info("Got thick row:\n{}".format(pformat(thick_row)))
+
         target = value = thick_row['value']
         if 'datatype' in thick_row:
             target = {'value': value, 'datatype': thick_row['datatype']}
         elif 'language' in thick_row:
             target = {'value': value, 'language': thick_row['language']}
 
-        triples = [{'subject': _subject, 'predicate': _predicate, 'object': target}]
+        triples = [{'subject': create_node(_subject),
+                    'predicate': create_node(_predicate),
+                    'object': create_node(target)}]
+        info("Triples are initially:\n{}".format(pformat(triples)))
 
         if 'annotations' in thick_row:
-            annotations = decompress(thick_row, value, 'value', 'annotations')
+            annotations = decompress(thick_row, target, 'value', 'annotations')
             annotations = predicateMap2triples(annotations)
             triples += annotations
 
         if 'metadata' in thick_row:
-            metadata = decompress(thick_row, value, 'value', 'metadata')
+            metadata = decompress(thick_row, target, 'value', 'metadata')
             metadata = predicateMap2triples(metadata)
             triples += metadata
 
@@ -730,19 +737,28 @@ if __name__ == "__main__":
     with open("build/thick_rows.json", "w") as fh:
         [print(pformat(row), file=fh) for row in thick]
 
-    with open("build/prefixes.json", "w") as fh:
-        print(pformat(prefixes), file=fh)
+    with open("build/prefixes.n3", "w") as fh:
+        for prefix in prefixes:
+            print("@prefix {}: {} .".format(prefix, prefixes[prefix].strip('<>')), file=fh)
 
     triples = thicks2triples(thick)
     with open("build/triples.json", "w") as fh:
         print(pformat(triples), file=fh)
 
     actual = triples2graph(triples)
+    #actual.bind('owl', 'http://www.w3.org/2002/07/owl#', replace=True)
+    #actual.bind('obo', 'http://purl.obolibrary.org/obo/', replace=True)
+    #actual.bind('rdfs', 'http://www.w3.org/2000/01/rdf-schema#', replace=True)
     with open("build/triples.n3", "w") as fh:
         render_graph(actual, fh)
 
     expected = Graph()
+    #for prefix in prefixes:
+    #    expected.bind(prefix, prefixes[prefix].strip('<>'), replace=True)
     expected.parse(EXPECTED_OWL)
+    #expected.bind('owl', 'http://www.w3.org/2002/07/owl#', replace=True)
+    #expected.bind('obo', 'http://purl.obolibrary.org/obo/', replace=True)
+    #expected.bind('rdfs', 'http://www.w3.org/2000/01/rdf-schema#', replace=True)
 
     with open("build/expected.ttl", "w") as fh:
         print(expected.serialize(format="n3").decode("utf-8"), file=fh)
@@ -751,7 +767,7 @@ if __name__ == "__main__":
 
     print("Comparing graphs:")
     try:
-        compare_graphs(actual, expected, False)
+        compare_graphs(actual, expected, True)
     except AssertionError as e:
         print("Graphs are not identical")
     else:
