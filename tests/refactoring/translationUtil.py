@@ -1,3 +1,8 @@
+DEBUG=True
+def log(message):
+    if DEBUG:
+        print(message, file=sys.stderr) 
+
 def firstObject(predicates, predicate):
     """Given a prediate map, return the first 'object'."""
     if predicates.get(predicate):
