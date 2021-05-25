@@ -7,9 +7,7 @@ from pprint import pformat
 import thin2subjectSpecialCases as specialCase
 import translationUtil as tUtil
 
-#with open("inverse.tsv") as fh:
-with open("axioms.tsv") as fh:
-#with open("thin.tsv") as fh:
+with open("testData/allClassExpressions.tsv") as fh:
     thin = list(csv.DictReader(fh, delimiter="\t"))
 
 DEBUG=True
@@ -19,6 +17,7 @@ def log(message):
 
 
 def row2objectMap(row):
+    #TODO: doc string is confusing
     """Convert a row dict to an object map.
     From
         {"subject": "ex:s", "predicate": "ex:p", "object": "ex:o"}
@@ -43,6 +42,12 @@ def row2objectMap(row):
 
 
 def tripels2dictionary(thin):
+    """Convert a list of thin rows to a nested subjects map (using blank nodes)
+    from
+        [{"subject": "ex:s", "predicate": "ex:p", "object": "ex:o"}]
+    to
+        {"ex:s": {"ex:p": [{"object": "ex:o"}]}}
+    """ 
     subject_ids = set(x["subject"] for x in thin)
     subjects = {}
 
@@ -55,48 +60,64 @@ def tripels2dictionary(thin):
             predicate = row["predicate"]
             if predicate not in predicates: 
                 predicates[predicate] = [] 
-            objects = predicates[predicate]  
-            objects.append(row2objectMap(row))
-            objects.sort(key=lambda k: str(k))
-            predicates[predicate] = objects 
+            #collect objects as an ordered list
+            objects = predicates[predicate]   #get already collected objects
+            objects.append(row2objectMap(row))#append newly found object
+            objects.sort(key=lambda k: str(k))#sort them
+            predicates[predicate] = objects   #update
         subjects[subject_id] = predicates
 
     return subjects
 
 def blankNodeDependencies(thin):
-    subject_ids = set(x["subject"] for x in thin)
+    """Determines (direct) blank node dependencies in RDF triples (given as a 'row dictionary').
+
+    Example input:
+        ex:s         ex:p   ex:p
+        ex:s         ex:p   _:blankNode1
+        ex:s         ex:p   _:blankNode2
+        _:blankNode1 ex:p   _:blankNode3
+
+    Example output: 
+        {"ex:s": {_:blankNode1, _:blankNode2}, _:blankNode1 : {_:blankNode3}}
+    """ 
+
     dependencies = {}
 
-    # Convert rows to a subject dict.
-    for subject_id in subject_ids:
-        predicates = {}
-        for row in thin:
-            if row["subject"] != subject_id:
-                continue 
-            if row.get("object") and row["object"].startswith("_:"):
-                if not subject_id in dependencies:
-                    dependencies[subject_id] = set()
-                dependencies[subject_id].add(row["object"])
+    for row in thin:
+        if row.get("object") and row["object"].startswith("_:"):
+            subject = row["subject"]
+            if not subject in dependencies:
+                dependencies[subject] = set()
+            dependencies[subject].add(row["object"])
     return dependencies
 
-
-
 def getLeaves(subjects, dependencies): #blank nodes in subjects without dependencies
-    leaves = set()
+    """Determines leafs in blank node dependencies.
+
+    Example input: 
+        {"ex:s": {_:blankNode1, _:blankNode2}, _:blankNode1 : {_:blankNode3}}
+    Example output:
+        {_:blankNode1}
+    """ 
+
+    leafs = set()
     for subject in subjects:
         if(tUtil.isBlankNode(subject) and (not subject in dependencies)):
-            leaves.add(subject)
-    return leaves 
+            leafs.add(subject)
+    return leafs 
 
 def updateDependencies(objectValue, dependencies):
     updates = [k for k,v in dependencies.items() if objectValue in v]
     for u in updates:
         dependencies[u].remove(objectValue)
         if not dependencies[u]:
-            del dependencies[u]
-
+            del dependencies[u] 
 
 def resolveDependencies(subjects, dependencies):
+    """Convert a nested subjects map using blank nodes (as objects)
+    to a nested subject map  without blank nodes (as objects)
+    """ 
     while dependencies: #these are direct dependencies
 
         leaves = getLeaves(subjects, dependencies) 
@@ -127,9 +148,6 @@ def resolveDependencies(subjects, dependencies):
         for subject in handled: #delete all handled blank nodes
             del subjects[subject]
 
-
-
-
 def translate(thin):
     """Convert a list of thin rows to a nested subjects map:
     From
@@ -140,10 +158,10 @@ def translate(thin):
 
     subjects = tripels2dictionary(thin) 
     dependencies = blankNodeDependencies(thin) 
-    leaves = getLeaves(subjects, dependencies) 
     resolveDependencies(subjects, dependencies)
 
     subjects = specialCase.handleAllDisjointClasses(subjects)
+    subjects = specialCase.handleEquivalence(subjects)
     subjects = specialCase.handleAnnotations(subjects)
     subjects = specialCase.handleReification(subjects) 
 
