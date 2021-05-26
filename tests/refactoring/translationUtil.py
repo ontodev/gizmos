@@ -1,3 +1,5 @@
+import sys
+
 DEBUG=True
 def log(message):
     if DEBUG:
