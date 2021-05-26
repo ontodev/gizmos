@@ -7,6 +7,7 @@ import sqlite3
 import sys
 
 from argparse import ArgumentParser
+from collections import OrderedDict
 from copy import deepcopy
 from gizmos.hiccup import render
 from pprint import pformat
@@ -19,12 +20,16 @@ from util import compare_graphs
 TSV = "build/obi_core.tsv"
 EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
 
-prefixes = {}
+# Create an OrderedDict of prefixes, sorted in descending order by the length
+# of the prefix's long form:
+prefixes = []
 with open("tests/resources/prefix.tsv") as fh:
     rows = csv.DictReader(fh, delimiter="\t")
     for row in rows:
         if row.get("prefix"):
-            prefixes[row["prefix"]] = row["base"]
+            prefixes.append((row["prefix"], row["base"]))
+prefixes.sort(key=lambda x: len(x[1]), reverse=True)
+prefixes = OrderedDict(prefixes)
 
 LOG_LEVEL = "info"
 def debug(message):
@@ -162,11 +167,17 @@ def thin2subjects(thin):
             subjects_copy[subject_id] = deepcopy(subjects[subject_id])
 
         if subjects_copy[subject_id].get("owl:annotatedSource"):
-            debug("OWL annotation: {}".format(subject_id))
+            info("OWL annotation ({}):\n{}".format(subject_id, pformat(subjects[subject_id])))
+            info("Looking for first object corresponding to {} in:\n{}"
+                 .format("owl:annotatedSource", pformat(subjects_copy[subject_id])))
             subject = firstObject(subjects_copy[subject_id], "owl:annotatedSource")
+            info("Looking for first object corresponding to {} in:\n{}"
+                 .format("owl:annotatedProperty", pformat(subjects_copy[subject_id])))
             predicate = firstObject(subjects_copy[subject_id], "owl:annotatedProperty")
+            info("Looking for first object corresponding to {} in:\n{}"
+                 .format("owl:annotatedTarget", pformat(subjects_copy[subject_id])))
             obj = firstObject(subjects_copy[subject_id], "owl:annotatedTarget")
-            debug("<{}, {}, {}>".format(subject, predicate, obj))
+            info("<{}, {}, {}>".format(subject, predicate, obj))
 
             del subjects_copy[subject_id]["owl:annotatedSource"]
             del subjects_copy[subject_id]["owl:annotatedProperty"]
@@ -178,15 +189,19 @@ def thin2subjects(thin):
             if not subjects_copy[subject].get(predicate):
                 subjects_copy[subject][predicate] = deepcopy(subjects[subject][predicate])
 
+            info("Before annotation, subject {} is:\n{}"
+                 .format(subject, pformat(subjects_copy[subject])))
             objs = subjects_copy[subject][predicate]
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o.get("object") == obj:
+                if o.get("object") == obj or o.get("value") == obj:
                     o["annotations"] = subjects_copy[subject_id]
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
+            info("After annotation, subject {} is now:\n{}"
+                 .format(subject, pformat(subjects_copy[subject])))
 
         if subjects_copy[subject_id].get("rdf:subject"):
             debug("RDF reification: {}".format(subject_id))
@@ -249,19 +264,19 @@ def thick2subjects(thick):
 
 ### thick to Turtle
 
+def shorten(content):
+    if isinstance(content, URIRef):
+        m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
+        if m:
+            for key in prefixes:
+                if m[1] == prefixes[key]:
+                    return "{}:{}".format(key, m[3])
+    if content.startswith("http"):
+        content = "<{}>".format(content)
+    return content
+
 def render_graph(graph, fh=sys.stdout):
     ttls = sorted([(s, p, o) for s, p, o in graph])
-    def shorten(content):
-        if isinstance(content, URIRef):
-            m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
-            if m:
-                for key in prefixes:
-                    if m[1] == prefixes[key]:
-                        return "{}:{}".format(key, m[3])
-        if content.startswith("http"):
-            content = "<{}>".format(content)
-        return content
-
     for subj, pred, obj in ttls:
         print("{} {} ".format(shorten(subj), shorten(pred)), end="", file=fh)
         if isinstance(obj, Literal) and obj.datatype:
@@ -278,9 +293,11 @@ def deprefix(content):
         return "{}{}".format(prefixes[m[1]], m[2])
 
 def create_node(content):
-    if isinstance(content, str) and content.startswith('_:'):
+    if isinstance(content, URIRef):
+        return content
+    elif isinstance(content, str) and content.startswith('_:'):
         return BNode(content)
-    elif isinstance(content, str) and content.startswith('<'):
+    elif isinstance(content, str) and (content.startswith('<')): #or content.startswith('http://')):
         return URIRef(content.strip('<>'))
     elif isinstance(content, str):
         deprefixed_content = deprefix(content)
@@ -294,7 +311,7 @@ def create_node(content):
                 else URIRef(deprefixed_datatype)
             return(Literal(content['value'], datatype=datatype))
         else:
-            debug("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
+            info("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
             return Literal(format(content))
 
 # TODO: this function has become so small that we don't really need it anymore.
@@ -414,7 +431,6 @@ def thick2triples(_subject, _predicate, _thick_row):
             # are generated here. See also the similar comment below. In that case ids are generated
             # in ascending order.
             next_id = b_id - 1
-            #if _predicate in ['owl:annotatedTarget', 'rdf:object']:
             triples.append({'subject': create_node(_subject),
                             'predicate': create_node(_predicate),
                             'object': create_node(f"_:myb{next_id}")})
@@ -523,8 +539,13 @@ def firstObject(predicates, predicate):
     if predicates.get(predicate):
         for obj in predicates[predicate]:
             if obj.get("object"):
+                info("Found\n{}".format(pformat(obj['object'])))
                 return obj["object"]
+            elif obj.get('value'):
+                info("Found\n{}".format(pformat(obj['value'])))
+                return obj["value"]
 
+    info("No object found")
 
 def rdf2list(predicates):
     """Convert a nested RDF list to a simple list of objects.
@@ -758,6 +779,7 @@ if __name__ == "__main__":
     expected.parse(EXPECTED_OWL)
     #expected.bind('owl', 'http://www.w3.org/2002/07/owl#', replace=True)
     #expected.bind('obo', 'http://purl.obolibrary.org/obo/', replace=True)
+    #expected.bind('IAO', Namespace('http://purl.obolibrary.org/obo/IAO_'), replace=True)
     #expected.bind('rdfs', 'http://www.w3.org/2000/01/rdf-schema#', replace=True)
 
     with open("build/expected.ttl", "w") as fh:
