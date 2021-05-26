@@ -31,7 +31,7 @@ with open("tests/resources/prefix.tsv") as fh:
 prefixes.sort(key=lambda x: len(x[1]), reverse=True)
 prefixes = OrderedDict(prefixes)
 
-LOG_LEVEL = "info"
+LOG_LEVEL = "debug"
 def debug(message):
     if LOG_LEVEL in "debug":
         print(message, file=sys.stderr)
@@ -84,16 +84,16 @@ def row2objectMap(row):
     """
     if row.get("object"):
         return {"object": row["object"]}
-    elif row.get("value"):
+    elif row.get("value") is not None:
         if row.get("datatype"):
             return {"value": row["value"], "datatype": row["datatype"]}
         elif row.get("language"):
             return {"value": row["value"], "language": row["language"]}
-        else:
+        elif row["value"]:
             return {"value": row["value"]}
-    else:
-        debug("Invalid RDF row {}".format(row))
-        #raise Exception("Invalid RDF row")
+
+    debug("Invalid RDF row {}".format(row))
+    raise Exception("Invalid RDF row")
 
 
 def thin2subjects(thin):
