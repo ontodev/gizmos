@@ -13,7 +13,7 @@ def log(message):
         print(message, file=sys.stderr) 
 
 #with open("obi_core.nt") as fh:
-with open("obi.nt") as fh:
+with open("obiTab.nt") as fh:
     #NOTE: using ¬ as a quotechar is a workaround!
     #The default quote char is a double quote.
     #This leads the DictReader to read triples incorrectly
@@ -24,7 +24,8 @@ with open("obi.nt") as fh:
     #will be parsed as ONE triple: A B "C D E"
     #setting the quote char to a char that does not occur in the file solves this issue
     #it would be nice to set 'quotechar=None' (if you know how to do this - please let me know)
-    triples = list(csv.DictReader(fh, delimiter=" ", quotechar="¬"))
+    triples = list(csv.DictReader(fh, delimiter="\t", quotechar="¬"))
+    #triples = list(csv.DictReader(fh, delimiter="\t"))
 
 def isBlankNode(o):
     return o and isinstance(o, str) and o.startswith("_:")
@@ -46,14 +47,14 @@ def triples2index(triples, path):
     subject2id = {}
 
     for t in triples:
-        triple = t["subject"] + " " + t["predicate"] + " " + t["object"] + "\n"
+        triple = t["subject"] + "\t" + t["predicate"] + "\t" + t["object"] + "\n"
         subject = t["subject"]
 
         #initialise
         if not subject in subject2id:
             subject2id[subject] = id
             f = open(path + "/" + str(id), "a")
-            f.write("subject" + " " + "predicate" + " " + "object" + "\n")
+            f.write("subject" + "\t" + "predicate" + "\t" + "object" + "\n")
             f.close() 
             id += 1 
 
@@ -79,7 +80,7 @@ def getSubject2indexMap(index):
     #get subject2id map from index 
     subject2id = {}
     with open(index + "/subject2id") as fh:
-        subject2idFile = list(csv.DictReader(fh, delimiter=" "))
+        subject2idFile = list(csv.DictReader(fh, delimiter=" "))#space delimiter is okay here
     for r in subject2idFile:
         subject = r["subject"]
         id = r["id"]
@@ -98,7 +99,7 @@ def getDependencies(index, subject, subject2id):
     while toVisit:
         id = toVisit.pop()
         with open(index + "/" + id) as fh:
-            subjectTriples = list(csv.DictReader(fh, delimiter=" "))
+            subjectTriples = list(csv.DictReader(fh, delimiter="\t"))
             for t in subjectTriples:
                 object = t["object"]
                 if(isBlankNode(object)):
@@ -116,7 +117,7 @@ def getSubject2type(index):
     subject2types = {}
     for s, id in subject2id.items():
             with open(index + "/" + id) as fh:
-                triples = list(csv.DictReader(fh, delimiter=" "))
+                triples = list(csv.DictReader(fh, delimiter="\t"))
                 subject2types[s] = []
                 for t in triples: 
                     #TODO: commit to abbreviated namespeces, i.e. 'rdf:type'?
@@ -144,21 +145,21 @@ def index2stanza(index):
         stanzaTriples = set()
         for d in dependencies:
             with open(index + "/" + d) as fh:
-                triples = list(csv.DictReader(fh, delimiter=" "))
+                triples = list(csv.DictReader(fh, delimiter="\t"))
                 for t in triples: 
-                    triple = id + " " +  t["subject"] + " " + t["predicate"] + " " + t["object"] + "\n"
+                    triple = id + "\t" +  t["subject"] + "\t" + t["predicate"] + "\t" + t["object"] + "\n"
                     stanzaTriples.add(triple)
 
                     #get types of 'leaf subjects' for this stanza
                     object = t["object"] 
                     if(object in subject2types):
                         for type in subject2types[object]:
-                            typeTriple = id + " " +  object + " " + "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>" + " " + type + "\n"
+                            typeTriple = id + "\t" +  object + "\t" + "rdf:type" + "\t" + type + "\n"
                             stanzaTriples.add(typeTriple) 
 
         #write stanza
         stanzaFile = open(outputPath + "/" + id , "a")
-        stanzaFile.write("stanza subject predicate object\n") 
+        stanzaFile.write("stanza" +"\t"+ "subject" +"\t"+"predicate"+"\t"+"object\n") 
         for t in stanzaTriples:
             stanzaFile.write(t) 
         stanzaFile.close()
@@ -174,7 +175,7 @@ def getRootSubjects(index):
             rootSubjects.add(str(id))
         else: #check special cases
             with open(index + "/" + id) as fh:
-                subjectTriples = list(csv.DictReader(fh, delimiter=" "))
+                subjectTriples = list(csv.DictReader(fh, delimiter="\t"))
                 for t in subjectTriples:
                     predicate = t["predicate"]
                     object = t["object"]
@@ -186,6 +187,7 @@ def getRootSubjects(index):
         
 if __name__ == "__main__":
     path = os.getcwd()
+    print(len(triples))
     triples2index(triples, path)
 
     indexPath = os.getcwd() + "/index"
