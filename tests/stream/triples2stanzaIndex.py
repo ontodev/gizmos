@@ -12,20 +12,23 @@ def log(message):
     if DEBUG:
         print(message, file=sys.stderr) 
 
-with open("obi_core.nt") as fh:
+#with open("obi_core.nt") as fh:
+with open("obi.nt") as fh:
     triples = list(csv.DictReader(fh, delimiter=" "))
 
 def isBlankNode(o):
     return o and isinstance(o, str) and o.startswith("_:")
 
 
-def triples2index(triples):
+#TODO there is a bug in here
+def triples2index(triples, path):
     """Converts a triple store into an index system. 
     - Each subject is assigned a unique ID 
     - Triples with the same subject are stored in a file named after the corresponding ID
     - The file 'subject2id' specifies the mapping from subjects to the index id."""
 
-    path = os.getcwd() + "/index"
+    #path = os.getcwd() + "/index"
+    path = path + "/index"
     os.mkdir(path) 
 
     #assign subjects an id
@@ -62,7 +65,6 @@ def triples2index(triples):
 def getSubject2indexMap(index):
     """Takes a path 'index' to an indexed of triple store. 
     Returns a map as specified by the subject2id file of the index."""
-
 
     #get subject2id map from index 
     subject2id = {}
@@ -125,7 +127,7 @@ def index2stanza(index):
     os.mkdir(outputPath) 
 
     for s in subject2id:
-        dependencies = getDependencies(path, s, subject2id)
+        dependencies = getDependencies(index, s, subject2id)
         dependencies.add(subject2id[s])#add root subject 
 
         id = subject2id[s]
@@ -152,18 +154,38 @@ def index2stanza(index):
         stanzaFile.close()
 
 #TODO: include blank nodes that are associated with disjoint classes, etc..
-def getRootSubjects(subject2id):
+def getRootSubjects(index):
     """Takes a path to an 'index' and returns a set of all root subjects.
     (A root subject is a subject that can be associated with an OWL axiom or the subject of a thick triple."""
+    subject2id = getSubject2indexMap(index)
+    rootSubjects = set()
     for s, id in subject2id.items():
         if(not isBlankNode(s)):
-            print(s + ":" + str(id))
+            rootSubjects.add(str(id))
+        else: #check special cases
+            with open(index + "/" + id) as fh:
+                subjectTriples = list(csv.DictReader(fh, delimiter=" "))
+                for t in subjectTriples:
+                    predicate = t["predicate"]
+                    object = t["object"]
+                    #check disjoint classes case
+                    if(predicate == "rdf:type" and object == "owl:AllDisjointClasses"):
+                        rootSubjects.add(str(id)) 
+
+    return rootSubjects
         
 if __name__ == "__main__":
-    path = os.getcwd() + "/index"
-    #triples2index(triples)
+    path = os.getcwd()
+    triples2index(triples, path)
+
+    indexPath = os.getcwd() + "/index"
+    index2stanza(indexPath) 
+
+    rootSubjects = getRootSubjects(indexPath)
+    with open(indexPath + "/rootSubjects", "a") as fh:
+        for r in rootSubjects:
+            fh.write(r + "\n")
 
     #subject2id = getSubject2indexMap(path)
     #getRootSubjects(subject2id)
 
-    index2stanza(path) 
