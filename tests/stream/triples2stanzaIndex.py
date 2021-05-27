@@ -14,7 +14,17 @@ def log(message):
 
 #with open("obi_core.nt") as fh:
 with open("obi.nt") as fh:
-    triples = list(csv.DictReader(fh, delimiter=" "))
+    #NOTE: using ¬ as a quotechar is a workaround!
+    #The default quote char is a double quote.
+    #This leads the DictReader to read triples incorrectly
+    #if a triple does not use matching quotes.
+    #For example:
+    #A B "C
+    #C D E"
+    #will be parsed as ONE triple: A B "C D E"
+    #setting the quote char to a char that does not occur in the file solves this issue
+    #it would be nice to set 'quotechar=None' (if you know how to do this - please let me know)
+    triples = list(csv.DictReader(fh, delimiter=" ", quotechar="¬"))
 
 def isBlankNode(o):
     return o and isinstance(o, str) and o.startswith("_:")
