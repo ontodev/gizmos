@@ -5,9 +5,7 @@ import sys
 from copy import deepcopy
 from pprint import pformat
 
-#TODO handle namespaces
 #TODO handle blank node subjects (for, e.g. disjoint classes axioms)
-#TODO remove duplicates
 
 DEBUG=True
 def log(message):
@@ -107,7 +105,6 @@ def getSubject2type(index):
 
     return subject2types
 
-#TODO: don't be clever about duplicates (and all necessary triples and clean up duplicates later) 
 def index2stanza(index): 
     """Get all dependency blank nodes and merge them into one file
     also attach a stanza which is the ID of a subject"""
@@ -122,29 +119,27 @@ def index2stanza(index):
         dependencies = getDependencies(path, s, subject2id)
         dependencies.add(subject2id[s])#add root subject 
 
-
-        seenTypes = set()
-        seenTypes.update(dependencies)
-
         id = subject2id[s]
-        stanzaFile = open(outputPath + "/" + id , "a")
-        stanzaFile.write("stanza subject predicate object\n") 
+        stanzaTriples = set()
         for d in dependencies:
             with open(index + "/" + d) as fh:
                 triples = list(csv.DictReader(fh, delimiter=" "))
                 for t in triples: 
                     triple = id + " " +  t["subject"] + " " + t["predicate"] + " " + t["object"] + "\n"
-                    stanzaFile.write(triple) 
+                    stanzaTriples.add(triple)
 
                     #get types of 'leaf subjects' for this stanza
-                    seenTypes.add(t["subject"])#don't repeat triples already added 
                     object = t["object"] 
-                    if((not object in seenTypes) and (object in subject2types)): 
+                    if(object in subject2types):
                         for type in subject2types[object]:
                             typeTriple = id + " " +  object + " " + "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>" + " " + type + "\n"
-                            stanzaFile.write(typeTriple) 
-                        seenTypes.add(object)
+                            stanzaTriples.add(typeTriple) 
 
+        #write stanza
+        stanzaFile = open(outputPath + "/" + id , "a")
+        stanzaFile.write("stanza subject predicate object\n") 
+        for t in stanzaTriples:
+            stanzaFile.write(t) 
         stanzaFile.close()
 
 #TODO: include blank nodes that are associated with disjoint classes, etc..
