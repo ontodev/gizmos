@@ -15,10 +15,10 @@ from rdflib import Graph, BNode, URIRef, Literal
 
 from util import compare_graphs
 
-TSV = "tests/thin.tsv"
-EXPECTED_OWL = 'example.rdf'
-#TSV = "build/obi_core.tsv"
-#EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
+#TSV = "tests/thin.tsv"
+#EXPECTED_OWL = 'example.rdf'
+TSV = "build/obi_core.tsv"
+EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
 
 # Create an OrderedDict of prefixes, sorted in descending order by the length
 # of the prefix's long form:
@@ -204,7 +204,7 @@ def thin2subjects(thin):
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o.get("object") == obj:
+                if o.get("object") == obj or o.get("value") == obj:
                     o["metadata"] = subjects_copy[subject_id]
                     remove.add(subject_id)
                 objs_copy.append(o)
