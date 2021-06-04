@@ -9,6 +9,7 @@ import sys
 from argparse import ArgumentParser
 from collections import OrderedDict
 from copy import deepcopy
+import functools
 from gizmos.hiccup import render
 from pprint import pformat
 from rdflib import Graph, BNode, URIRef, Literal
@@ -31,12 +32,28 @@ with open("tests/resources/prefix.tsv") as fh:
 prefixes.sort(key=lambda x: len(x[1]), reverse=True)
 prefixes = OrderedDict(prefixes)
 
+debug = False
 nesting = 0
 def log(message):
-    global nesting
-    message = message.replace('\n', '\n' + '    '*nesting)
-    print('    '*nesting, end='', file=sys.stderr)
-    print(message, file=sys.stderr)
+    if debug:
+        global nesting
+        message = message.replace('\n', '\n' + '    '*nesting)
+        print('    '*nesting, end='', file=sys.stderr)
+        print(message, file=sys.stderr)
+
+def nest_log(fn):
+    """Decorator to increase the indentation of the log; useful for recursive debugging."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        global nesting
+        log("Entering function {} ...".format(fn.__name__))
+        nesting += 1
+        ret = fn(*args, **kwargs)
+        nesting -= 1
+        log("Exited function {} ...".format(fn.__name__))
+        return ret
+    return wrapped
+
 
 # def dict_factory(cursor, row):
 #     d = {}
@@ -50,6 +67,7 @@ def log(message):
 # for row in cur.execute('SELECT * FROM statements'):
 #     thin.append(row)
 
+@nest_log
 def renderSubjects(subjects):
     """Print a nested subject dict as indented lines.
     From
@@ -66,6 +84,7 @@ def renderSubjects(subjects):
             for obj in subjects[subject_id][predicate]:
                 print("   ", obj)
 
+@nest_log
 def row2objectMap(row):
     """Convert a row dict to an object map.
     From
@@ -89,7 +108,7 @@ def row2objectMap(row):
     log("Invalid RDF row {}".format(row))
     raise Exception("Invalid RDF row")
 
-
+@nest_log
 def thin2subjects(thin):
     """Convert a list of thin rows to a nested subjects map:
     From
@@ -216,6 +235,7 @@ def thin2subjects(thin):
     return subjects_copy
 
 
+@nest_log
 def subjects2thick(subjects):
     """Convert a nested subjects map to thick rows.
     From
@@ -237,13 +257,13 @@ def subjects2thick(subjects):
                 rows.append(result)
     return rows
 
-
+@nest_log
 def thick2subjects(thick):
     pass
 
 
 ### thick to Turtle
-
+@nest_log
 def shorten(content):
     if isinstance(content, URIRef):
         m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
@@ -255,6 +275,7 @@ def shorten(content):
         content = "<{}>".format(content)
     return content
 
+@nest_log
 def render_graph(graph, fh=sys.stdout):
     ttls = sorted([(s, p, o) for s, p, o in graph])
     for subj, pred, obj in ttls:
@@ -267,11 +288,13 @@ def render_graph(graph, fh=sys.stdout):
             print("{} ".format(shorten(obj)), end="", file=fh)
         print(".", file=fh)
 
+@nest_log
 def deprefix(content):
     m = re.compile(r"([\w\-]+):(.*)").match(content)
     if m and prefixes.get(m[1]):
         return "{}{}".format(prefixes[m[1]], m[2])
 
+@nest_log
 def create_node(content):
     if isinstance(content, URIRef):
         return content
@@ -295,10 +318,12 @@ def create_node(content):
             return Literal(format(content))
 
 b_id = 0
+@nest_log
 def thick2triples(_subject, _predicate, _thick_row):
     if 'object' not in _thick_row and 'value' not in _thick_row:
         raise Exception(f"Don't know how to handle thick_row without value or object: {_thick_row}")
 
+    @nest_log
     def predicateMap2triples(pred_map):
         global b_id
         b_id += 1
@@ -310,6 +335,7 @@ def thick2triples(_subject, _predicate, _thick_row):
                 triples += thick2triples(bnode, predicate, obj)
         return triples
 
+    @nest_log
     def decompress(thick_row, target, target_type, decomp_type):
         spo_mappings = {
             'annotations': {
@@ -340,6 +366,7 @@ def thick2triples(_subject, _predicate, _thick_row):
             annodata[key] = thick_row[decomp_type][key]
         return annodata
 
+    @nest_log
     def obj2triples(thick_row):
         global b_id
 
@@ -378,6 +405,7 @@ def thick2triples(_subject, _predicate, _thick_row):
 
         return triples
 
+    @nest_log
     def val2triples(thick_row):
         target = value = thick_row['value']
         if 'datatype' in thick_row:
@@ -402,6 +430,7 @@ def thick2triples(_subject, _predicate, _thick_row):
     elif 'value' in _thick_row:
         return val2triples(_thick_row)
 
+@nest_log
 def thicks2triples(thick_rows):
     triples = []
     for row in thick_rows:
@@ -414,6 +443,7 @@ def thicks2triples(thick_rows):
 
 owlTypes = ["owl:Restriction"]
 
+@nest_log
 def firstObject(predicates, predicate):
     """Given a prediate map, return the first 'object'."""
     if predicates.get(predicate):
@@ -425,6 +455,7 @@ def firstObject(predicates, predicate):
 
     log("No object found")
 
+@nest_log
 def rdf2list(predicates):
     """Convert a nested RDF list to a simple list of objects.
     From
@@ -452,7 +483,7 @@ def rdf2list(predicates):
         return result + rdf2list(o["object"])
     return result
 
-
+@nest_log
 def rdf2ofs(predicates):
     """Given a predicate map, try to return an OWL Functional S-Expression.
     From
@@ -475,7 +506,7 @@ def rdf2ofs(predicates):
         raise Exception(f"Unhandled type '{rdfType}' for: {predicates}")
     return result
 
-
+@nest_log
 def thick2reasoned(thick):
     """Convert logical thick rows to reasoned rows.
     From
@@ -506,13 +537,13 @@ def thick2reasoned(thick):
             reasoned.append(result)
     return reasoned
 
-
+@nest_log
 def quote(label):
     if re.search(r'\W', label):
         return f"'{label}'"
     return label
 
-
+@nest_log
 def ofs2omn(labels, ofs):
     """Convert OFS to Manchester (OMN) with labels.
     From
@@ -529,7 +560,7 @@ def ofs2omn(labels, ofs):
     else:
         raise Exception(f"Unhandled expression type '{first}' for: {ofs}")
 
-
+@nest_log
 def po2rdfa(labels, predicate, obj):
     if isinstance(obj, str):
         obj = {"object": obj}
@@ -559,7 +590,7 @@ def po2rdfa(labels, predicate, obj):
     else:
         raise Exception(f"Unhandled object: {obj}")
 
-
+@nest_log
 def ofs2rdfa(labels, ofs):
     """Convert an OFS list to an HTML vector."""
     first = ofs[0]
@@ -573,7 +604,7 @@ def ofs2rdfa(labels, ofs):
     else:
         raise Exception(f"Unhandled expression type '{first}' for: {ofs}")
 
-
+@nest_log
 def rows2labels(rows):
     """Given a list of rows, return a map from subject to rdfs:label value."""
     labels = {}
@@ -582,7 +613,7 @@ def rows2labels(rows):
             labels[row["subject"]] = row["value"]
     return labels
 
-
+@nest_log
 def subject2rdfa(labels, subject_id, predicates):
     """Convert a subject_id and predicate map to an HTML vector."""
     html = ["ul"]
@@ -591,7 +622,7 @@ def subject2rdfa(labels, subject_id, predicates):
             html.append(["li", po2rdfa(labels, predicate, obj)])
     return ["li", subject_id, html]
 
-
+@nest_log
 def subjects2rdfa(labels, subjects):
     """Convert a subject_id and subjects map to an HTML vector."""
     html = ["ul"]
@@ -604,7 +635,9 @@ if __name__ == "__main__":
     p = ArgumentParser("prototype.py", description="First pass at thick triples prototype")
     p.add_argument("-f", "--filter", nargs="+", default=[],
                    help="filter only on the given comma-separated list of stanzas")
+    p.add_argument("-l", "--log", action='store_true')
     args = p.parse_args()
+    debug = bool(args.log)
 
     rdfList = {'rdf:type': [{'object': 'rdf:List'}],
                'rdf:first': [{'value': 'A'}],
