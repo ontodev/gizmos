@@ -84,7 +84,6 @@ def getSubject2stanza(subject2triples, subject2types):
 
     for s in subject2triples:
         dependencies = getDependencies(s, subject2triples)
-        dependencies.add(s)#add root subject 
 
         stanzaTriples = []
         for t in subject2triples[s]:
