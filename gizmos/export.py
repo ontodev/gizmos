@@ -300,8 +300,8 @@ def render_html(prefixes, value_formats, predicate_ids, details, standalone=True
             else:
                 pred_label = h
 
-            predicate_id = predicate_labels[pred_label]
-            value_format = value_formats[h]
+            predicate_id = predicate_labels.get(pred_label)
+            value_format = value_formats.get(h)
             vo_list = detail.get(pred_label)
             if not vo_list:
                 tr.append(["td"])
