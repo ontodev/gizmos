@@ -341,8 +341,8 @@ def extract_terms(
         SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
           (SELECT subject FROM statements WHERE predicate = 'rdf:type'
-           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty'))
-           AND subject NOT LIKE '_:%'"""
+           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
+           AND subject NOT LIKE '_:%')"""
     )
 
     # Insert subclass statements for any class types
