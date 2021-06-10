@@ -340,8 +340,9 @@ def extract_terms(
         """INSERT INTO tmp_extract (stanza, subject, predicate, object)
         SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT stanza FROM statements WHERE predicate = 'rdf:type'
-           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty'))"""
+          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
+           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
+           AND subject NOT LIKE '_:%')"""
     )
 
     # Insert subclass statements for any class types
@@ -349,7 +350,8 @@ def extract_terms(
         """INSERT INTO tmp_extract (stanza, subject, predicate, object)
         SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT stanza FROM statements WHERE predicate = 'rdf:type' AND object = 'owl:Class')"""
+          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
+           AND object = 'owl:Class' AND subject NOT LIKE '_:%')"""
     )
 
     # Everything else is an instance
