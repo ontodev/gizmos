@@ -664,14 +664,16 @@ if __name__ == "__main__":
         for prefix in prefixes:
             print("@prefix {}: {} .".format(prefix, prefixes[prefix].strip('<>')), file=fh)
 
-    subjects = thin2subjects(thin)
-    with open("build/subjects.json", "w") as fh:
-        print(pformat(subjects), file=fh)
-    ##renderSubjects(subjects)
+    thin_by_stanza = {}
+    for t in thin:
+        if t['stanza'] not in thin_by_stanza:
+            thin_by_stanza[t['stanza']] = []
+        thin_by_stanza[t['stanza']].append(t)
 
-    thick = subjects2thick(subjects)
-    with open("build/thick_rows.json", "w") as fh:
-        [print(pformat(row), file=fh) for row in thick]
+    thick = []
+    for (stanza, thin) in thin_by_stanza.items():
+        subjects = thin2subjects(thin)
+        thick += subjects2thick(subjects)
 
     ############################
     # Round-trip: go from thick rows to thin triples, build a graph, and then compare to the
