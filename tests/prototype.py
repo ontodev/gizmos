@@ -18,8 +18,15 @@ from util import compare_graphs
 
 #TSV = "tests/thin.tsv"
 #EXPECTED_OWL = 'example.rdf'
+
 TSV = "build/obi_core.tsv"
 EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
+
+#TSV = "obi-complete.tsv"
+#EXPECTED_OWL = "obi.rdf"
+
+#TSV = "obi-complete.tsv"
+#EXPECTED_OWL = "expected_bfo_0000027.ttl"
 
 # Create an OrderedDict of prefixes, sorted in descending order by the length
 # of the prefix's long form:
@@ -180,6 +187,8 @@ def thin2subjects(thin):
             subjects_copy[subject_id] = deepcopy(subjects[subject_id])
 
         if subjects_copy[subject_id].get("owl:annotatedSource"):
+            log("Annotating subject: {}".format(subject_id))
+            log("This is what we've got to work with:\n{}".format(pformat(subjects_copy[subject_id])))
             subject = firstObject(subjects_copy[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects_copy[subject_id], "owl:annotatedProperty")
             obj = firstObject(subjects_copy[subject_id], "owl:annotatedTarget")
@@ -199,10 +208,17 @@ def thin2subjects(thin):
             for o in objs:
                 o = deepcopy(o)
                 if o.get("object") == obj or o.get("value") == obj:
-                    o["annotations"] = subjects_copy[subject_id]
+                    if 'annotations' not in o:
+                        o['annotations'] = {}
+                    for key, val in subjects_copy[subject_id].items():
+                        if key not in o['annotations']:
+                            o['annotations'][key] = []
+                        o['annotations'][key] += val
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
+            log("This is the result (subject: {}, predicate: {}):\n{}".format(
+                subject, predicate, pformat(subjects_copy[subject][predicate])))
 
         if subjects_copy[subject_id].get("rdf:subject"):
             subject = firstObject(subjects_copy[subject_id], "rdf:subject")
@@ -224,7 +240,12 @@ def thin2subjects(thin):
             for o in objs:
                 o = deepcopy(o)
                 if o.get("object") == obj or o.get("value") == obj:
-                    o["metadata"] = subjects_copy[subject_id]
+                    if 'metadata' not in o:
+                        o['metadata'] = {}
+                    for key, val in subjects_copy[subject_id].items():
+                        if key not in o['metadata']:
+                            o['metadata'][key] = []
+                        o['metadata'][key] += val
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
@@ -646,6 +667,7 @@ if __name__ == "__main__":
                                         'rdf:rest': [{'object': 'rdf:nil'}]}}]}
     log("List {}".format(rdf2ofs(rdfList)))
 
+    print("Reading in thin rows ...", file=sys.stderr)
     with open(TSV) as fh:
         thin = list(csv.DictReader(fh, delimiter="\t"))
     if args.filter:
@@ -660,6 +682,7 @@ if __name__ == "__main__":
     ############################
     ####### Generate thick rows
     ############################
+    print("Generating thick rows ...", file=sys.stderr)
     with open("build/prefixes.n3", "w") as fh:
         for prefix in prefixes:
             print("@prefix {}: {} .".format(prefix, prefixes[prefix].strip('<>')), file=fh)
@@ -675,10 +698,14 @@ if __name__ == "__main__":
         subjects = thin2subjects(thin)
         thick += subjects2thick(subjects)
 
+    #print(pformat(thick))
+    #sys.exit(0)
+
     ############################
     # Round-trip: go from thick rows to thin triples, build a graph, and then compare to the
     # original.
     ############################
+    print("Generating graph ...", file=sys.stderr)
     triples = thicks2triples(thick)
     with open("build/triples.json", "w") as fh:
         print(pformat(triples), file=fh)
@@ -689,18 +716,21 @@ if __name__ == "__main__":
         render_graph(actual, fh)
 
     expected = Graph()
-    expected.parse(EXPECTED_OWL)
+    if EXPECTED_OWL.endswith(".ttl"):
+        expected.parse(EXPECTED_OWL, format="ttl")
+    else:
+        expected.parse(EXPECTED_OWL)
 
     with open("build/expected.ttl", "w") as fh:
         print(expected.serialize(format="n3").decode("utf-8"), file=fh)
     with open("build/actual.ttl", "w") as fh:
         print(actual.serialize(format="n3").decode("utf-8"), file=fh)
 
-    print("Comparing graphs:")
+    print("Comparing graph to expected graph ...", file=sys.stderr)
     try:
         compare_graphs(actual, expected, True)
     except AssertionError as e:
-        print("Graphs are not identical. Full dumps can be found in build/expected.ttl "
+        print("Graphs are not identical. Full dumps can be found in build/actual.ttl "
               "and build/expected.ttl")
     else:
         print("Graphs are identical")
