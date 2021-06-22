@@ -16,17 +16,8 @@ from rdflib import Graph, BNode, URIRef, Literal
 
 from util import compare_graphs
 
-#TSV = "tests/thin.tsv"
-#EXPECTED_OWL = 'example.rdf'
-
-TSV = "build/obi_core.tsv"
-EXPECTED_OWL = 'tests/resources/obi_core_no_trailing_ws.owl'
-
-#TSV = "obi-complete.tsv"
-#EXPECTED_OWL = "obi.rdf"
-
-#TSV = "obi-complete.tsv"
-#EXPECTED_OWL = "expected_bfo_0000027.ttl"
+thin_input = None
+expected_owl = None
 
 # Create an OrderedDict of prefixes, sorted in descending order by the length
 # of the prefix's long form:
@@ -657,8 +648,12 @@ if __name__ == "__main__":
     p.add_argument("-f", "--filter", nargs="+", default=[],
                    help="filter only on the given comma-separated list of stanzas")
     p.add_argument("-l", "--log", action='store_true')
+    p.add_argument('THIN', help='The file, in TSV format, that contains thin triples to convert.')
+    p.add_argument('ONTOLOGY', help='The ontology file to use for the round-trip test.')
     args = p.parse_args()
     debug = bool(args.log)
+    thin_input = args.THIN
+    expected_file = args.ONTOLOGY
 
     rdfList = {'rdf:type': [{'object': 'rdf:List'}],
                'rdf:first': [{'value': 'A'}],
@@ -668,7 +663,7 @@ if __name__ == "__main__":
     log("List {}".format(rdf2ofs(rdfList)))
 
     print("Reading in thin rows ...", file=sys.stderr)
-    with open(TSV) as fh:
+    with open(thin_input) as fh:
         thin = list(csv.DictReader(fh, delimiter="\t"))
     if args.filter:
         pruned_thin = [row for row in thin if row['stanza'] in args.filter]
@@ -716,10 +711,10 @@ if __name__ == "__main__":
         render_graph(actual, fh)
 
     expected = Graph()
-    if EXPECTED_OWL.endswith(".ttl"):
-        expected.parse(EXPECTED_OWL, format="ttl")
+    if expected_file.endswith(".ttl"):
+        expected.parse(expected_file, format="ttl")
     else:
-        expected.parse(EXPECTED_OWL)
+        expected.parse(expected_file)
 
     with open("build/expected.ttl", "w") as fh:
         print(expected.serialize(format="n3").decode("utf-8"), file=fh)

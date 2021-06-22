@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:BFO="http://purl.obolibrary.org/obo/BFO_"
+   xmlns:CHEBI="http://purl.obolibrary.org/obo/CHEBI_"
+   xmlns:CL="http://purl.obolibrary.org/obo/CL_"
+   xmlns:CoVIC="https://cvdb.ontodev.com/antibody/"
+   xmlns:IAO="http://purl.obolibrary.org/obo/IAO_"
+   xmlns:IEDB="http://iedb.org/"
+   xmlns:NCBITaxon="http://purl.obolibrary.org/obo/NCBITaxon_"
+   xmlns:OBI="http://purl.obolibrary.org/obo/OBI_"
+   xmlns:ONTIE="https://ontology.iedb.org/ontology/ONTIE_"
+   xmlns:PR="http://purl.obolibrary.org/obo/PR_"
+   xmlns:PRO="http://www.uniprot.org/annotation/PRO_"
+   xmlns:UC="http://purl.uniprot.org/core/"
+   xmlns:UP="http://purl.uniprot.org/uniprot/"
+   xmlns:dce="http://purl.org/dc/elements/1.1/"
+   xmlns:dct="http://purl.org/dc/terms/"
+   xmlns:ds="https://cvdb.ontodev.com/dataset/"
+   xmlns:ex="http://example.com/"
+   xmlns:faldo="http://biohackathon.org/resource/faldo#"
+   xmlns:foaf="http://xmlns.com/foaf/0.1/"
+   xmlns:iedb-protein="http://iedb.org/taxon-protein/"
+   xmlns:obo="http://purl.obolibrary.org/obo/"
+   xmlns:oio="http://www.geneontology.org/formats/oboInOwl#"
+   xmlns:org="https://cvdb.ontodev.com/organization/"
+   xmlns:owl="http://www.w3.org/2002/07/owl#"
+   xmlns:protege="http://protege.stanford.edu/plugins/owl/protege#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+   xmlns:user="https://cvdb.ontodev.com/user/"
+   xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+  <owl:Class rdf:about="http://example.com/foo">
+    <ex:items>
+      <rdf:List>
+        <rdf:first>A</rdf:first>
+        <rdf:rest>
+          <rdf:List>
+            <rdf:first>B</rdf:first>
+            <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+          </rdf:List>
+        </rdf:rest>
+      </rdf:List>
+    </ex:items>
+    <ex:link rdf:resource="https://example.com/FOO"/>
+    <ex:size rdf:datatype="http://www.w3.org/2001/XMLSchema#int">123</ex:size>
+    <rdfs:label>Foo</rdfs:label>
+    <rdfs:label xml:lang="fr">Fou</rdfs:label>
+    <rdfs:subClassOf>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="http://example.com/part-of"/>
+        <owl:someValuesFrom rdf:resource="http://example.com/bar"/>
+      </owl:Restriction>
+    </rdfs:subClassOf>
+  </owl:Class>
+  <owl:Axiom>
+    <rdfs:comment xml:lang="en">OWL axiom annotation</rdfs:comment>
+    <owl:annotatedProperty rdf:resource="http://example.com/link"/>
+    <owl:annotatedSource rdf:resource="http://example.com/foo"/>
+    <owl:annotatedTarget rdf:resource="https://example.com/FOO"/>
+  </owl:Axiom>
+  <rdf:Statement>
+    <rdf:object rdf:resource="https://example.com/FOO"/>
+    <rdf:predicate rdf:resource="http://example.com/link"/>
+    <rdf:subject rdf:resource="http://example.com/foo"/>
+    <rdfs:comment xml:lang="en">RDF metadata</rdfs:comment>
+  </rdf:Statement>
+</rdf:RDF>
