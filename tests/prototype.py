@@ -6,28 +6,52 @@ import re
 import sqlite3
 import sys
 
+from argparse import ArgumentParser
+from collections import OrderedDict
 from copy import deepcopy
+import functools
 from gizmos.hiccup import render
 from pprint import pformat
 from rdflib import Graph, BNode, URIRef, Literal
 
 from util import compare_graphs
 
-DEBUG=True
-def log(message):
-    if DEBUG:
-        print(message, file=sys.stderr)
+thin_input = None
+expected_owl = None
 
-prefixes = {}
-with open("tests/prefix.tsv") as fh:
+# Create an OrderedDict of prefixes, sorted in descending order by the length
+# of the prefix's long form:
+prefixes = []
+with open("tests/resources/prefix.tsv") as fh:
     rows = csv.DictReader(fh, delimiter="\t")
     for row in rows:
         if row.get("prefix"):
-            prefixes[row["prefix"]] = row["base"]
+            prefixes.append((row["prefix"], row["base"]))
+prefixes.sort(key=lambda x: len(x[1]), reverse=True)
+prefixes = OrderedDict(prefixes)
 
-with open("tests/thin.tsv") as fh:
-#with open("obi-complete.tsv") as fh:
-    thin = list(csv.DictReader(fh, delimiter="\t"))
+debug = False
+nesting = 0
+def log(message):
+    if debug:
+        global nesting
+        message = message.replace('\n', '\n' + '    '*nesting)
+        print('    '*nesting, end='', file=sys.stderr)
+        print(message, file=sys.stderr)
+
+def nest_log(fn):
+    """Decorator to increase the indentation of the log; useful for recursive debugging."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        global nesting
+        log("Entering function {} ...".format(fn.__name__))
+        nesting += 1
+        ret = fn(*args, **kwargs)
+        nesting -= 1
+        log("Exited function {} ...".format(fn.__name__))
+        return ret
+    return wrapped
+
 
 # def dict_factory(cursor, row):
 #     d = {}
@@ -41,6 +65,7 @@ with open("tests/thin.tsv") as fh:
 # for row in cur.execute('SELECT * FROM statements'):
 #     thin.append(row)
 
+@nest_log
 def renderSubjects(subjects):
     """Print a nested subject dict as indented lines.
     From
@@ -57,6 +82,7 @@ def renderSubjects(subjects):
             for obj in subjects[subject_id][predicate]:
                 print("   ", obj)
 
+@nest_log
 def row2objectMap(row):
     """Convert a row dict to an object map.
     From
@@ -69,18 +95,18 @@ def row2objectMap(row):
     """
     if row.get("object"):
         return {"object": row["object"]}
-    elif row.get("value"):
+    elif row.get("value") is not None:
         if row.get("datatype"):
             return {"value": row["value"], "datatype": row["datatype"]}
         elif row.get("language"):
             return {"value": row["value"], "language": row["language"]}
-        else:
+        elif row["value"]:
             return {"value": row["value"]}
-    else:
-        log("Invalid RDF row {}".format(row))
-        #raise Exception("Invalid RDF row")
 
+    log("Invalid RDF row {}".format(row))
+    raise Exception("Invalid RDF row")
 
+@nest_log
 def thin2subjects(thin):
     """Convert a list of thin rows to a nested subjects map:
     From
@@ -152,11 +178,11 @@ def thin2subjects(thin):
             subjects_copy[subject_id] = deepcopy(subjects[subject_id])
 
         if subjects_copy[subject_id].get("owl:annotatedSource"):
-            log("OWL annotation: {}".format(subject_id))
+            log("Annotating subject: {}".format(subject_id))
+            log("This is what we've got to work with:\n{}".format(pformat(subjects_copy[subject_id])))
             subject = firstObject(subjects_copy[subject_id], "owl:annotatedSource")
             predicate = firstObject(subjects_copy[subject_id], "owl:annotatedProperty")
             obj = firstObject(subjects_copy[subject_id], "owl:annotatedTarget")
-            log("<{}, {}, {}>".format(subject, predicate, obj))
 
             del subjects_copy[subject_id]["owl:annotatedSource"]
             del subjects_copy[subject_id]["owl:annotatedProperty"]
@@ -172,18 +198,23 @@ def thin2subjects(thin):
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o.get("object") == obj:
-                    o["annotations"] = subjects_copy[subject_id]
+                if o.get("object") == obj or o.get("value") == obj:
+                    if 'annotations' not in o:
+                        o['annotations'] = {}
+                    for key, val in subjects_copy[subject_id].items():
+                        if key not in o['annotations']:
+                            o['annotations'][key] = []
+                        o['annotations'][key] += val
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
+            log("This is the result (subject: {}, predicate: {}):\n{}".format(
+                subject, predicate, pformat(subjects_copy[subject][predicate])))
 
         if subjects_copy[subject_id].get("rdf:subject"):
-            log("RDF reification: {}".format(subject_id))
             subject = firstObject(subjects_copy[subject_id], "rdf:subject")
             predicate = firstObject(subjects_copy[subject_id], "rdf:predicate")
             obj = firstObject(subjects_copy[subject_id], "rdf:object")
-            log("<{}, {}, {}>".format(subject, predicate, obj))
 
             del subjects_copy[subject_id]["rdf:subject"]
             del subjects_copy[subject_id]["rdf:predicate"]
@@ -199,8 +230,13 @@ def thin2subjects(thin):
             objs_copy = []
             for o in objs:
                 o = deepcopy(o)
-                if o.get("object") == obj:
-                    o["metadata"] = subjects_copy[subject_id]
+                if o.get("object") == obj or o.get("value") == obj:
+                    if 'metadata' not in o:
+                        o['metadata'] = {}
+                    for key, val in subjects_copy[subject_id].items():
+                        if key not in o['metadata']:
+                            o['metadata'][key] = []
+                        o['metadata'][key] += val
                     remove.add(subject_id)
                 objs_copy.append(o)
             subjects_copy[subject][predicate] = objs_copy
@@ -211,6 +247,7 @@ def thin2subjects(thin):
     return subjects_copy
 
 
+@nest_log
 def subjects2thick(subjects):
     """Convert a nested subjects map to thick rows.
     From
@@ -232,45 +269,50 @@ def subjects2thick(subjects):
                 rows.append(result)
     return rows
 
-
+@nest_log
 def thick2subjects(thick):
     pass
 
 
 ### thick to Turtle
+@nest_log
+def shorten(content):
+    if isinstance(content, URIRef):
+        m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
+        if m:
+            for key in prefixes:
+                if m[1] == prefixes[key]:
+                    return "{}:{}".format(key, m[3])
+    if content.startswith("http"):
+        content = "<{}>".format(content)
+    return content
 
-def render_graph(graph):
+@nest_log
+def render_graph(graph, fh=sys.stdout):
     ttls = sorted([(s, p, o) for s, p, o in graph])
-    def shorten(content):
-        if isinstance(content, URIRef):
-            m = re.compile(r"(http:\S+(#|\/))(.*)").match(content)
-            if m:
-                for key in prefixes:
-                    if m[1] == prefixes[key]:
-                        return "{}:{}".format(key, m[3])
-        if content.startswith("http"):
-            content = "<{}>".format(content)
-        return content
-
     for subj, pred, obj in ttls:
-        print("{} {} ".format(shorten(subj), shorten(pred)), end="")
+        print("{} {} ".format(shorten(subj), shorten(pred)), end="", file=fh)
         if isinstance(obj, Literal) and obj.datatype:
-            print('"{}"^^{} '.format(obj.value, shorten(obj.datatype)), end="")
+            print('"{}"^^{} '.format(obj.value, shorten(obj.datatype)), end="", file=fh)
         elif isinstance(obj, Literal) and obj.language:
-            print('"{}"@{} '.format(obj.value, obj.language), end="")
+            print('"{}"@{} '.format(obj.value, obj.language), end="", file=fh)
         else:
-            print("{} ".format(shorten(obj)), end="")
-        print(".")
+            print("{} ".format(shorten(obj)), end="", file=fh)
+        print(".", file=fh)
 
+@nest_log
 def deprefix(content):
     m = re.compile(r"([\w\-]+):(.*)").match(content)
     if m and prefixes.get(m[1]):
         return "{}{}".format(prefixes[m[1]], m[2])
 
+@nest_log
 def create_node(content):
-    if isinstance(content, str) and content.startswith('_:'):
+    if isinstance(content, URIRef):
+        return content
+    elif isinstance(content, str) and content.startswith('_:'):
         return BNode(content)
-    elif isinstance(content, str) and content.startswith('<'):
+    elif isinstance(content, str) and (content.startswith('<')):
         return URIRef(content.strip('<>'))
     elif isinstance(content, str):
         deprefixed_content = deprefix(content)
@@ -287,130 +329,145 @@ def create_node(content):
             log("WARNING: Could not create a node corresponding to content. Defaulting to Literal")
             return Literal(format(content))
 
-def triples2graph(triples):
-    graph = Graph()
-    for triple in triples:
-        subj = create_node(triple['subject'])
-        pred = create_node(triple['predicate'])
-        obj = triple['object']
-        if isinstance(obj, str) or isinstance(obj, dict):
-            graph.add((subj, pred, create_node(obj)))
+b_id = 0
+@nest_log
+def thick2triples(_subject, _predicate, _thick_row):
+    if 'object' not in _thick_row and 'value' not in _thick_row:
+        raise Exception(f"Don't know how to handle thick_row without value or object: {_thick_row}")
+
+    @nest_log
+    def predicateMap2triples(pred_map):
+        global b_id
+        b_id += 1
+    
+        bnode = f"_:myb{b_id}"
+        triples = []
+        for predicate, objects in pred_map.items():
+            for obj in objects:
+                triples += thick2triples(bnode, predicate, obj)
+        return triples
+
+    @nest_log
+    def decompress(thick_row, target, target_type, decomp_type):
+        spo_mappings = {
+            'annotations': {
+                'subject': 'owl:annotatedSource',
+                'predicate': 'owl:annotatedProperty',
+                'object': 'owl:annotatedTarget'
+            },
+            'metadata': {
+                'subject': 'rdf:subject',
+                'predicate': 'rdf:predicate',
+                'object': 'rdf:object'
+            }
+        }
+        annodata_subj = spo_mappings[decomp_type]['subject']
+        annodata_pred = spo_mappings[decomp_type]['predicate']
+        annodata_obj = spo_mappings[decomp_type]['object']
+
+        if isinstance(target, str) or 'value' in target:
+            annodata = {annodata_obj: [{target_type: target}]}
         else:
-            # Look through triple['object'], and if the block is either a reification
-            # or an annotation, switch the subject with the object being annotated/reified, otherwise
-            # leave the subject as is:
-            nested_target = None
-            for item in obj:
-                if item['predicate'] in ['owl:annotatedTarget', 'rdf:object']:
-                    nested_target = item['object']
-                    break
-                elif not nested_target:
-                    nested_target = item['subject']
-            graph.add((subj, pred, create_node(nested_target)))
-            [graph.add((s, p, o)) for s, p, o in triples2graph(obj)]
+            annodata = {annodata_obj: [{target_type: predicateMap2triples(target)}]}
 
-    return graph
+        annodata[annodata_subj] = [{'object': thick_row['subject']}]
+        annodata[annodata_pred] = [{'object': thick_row['predicate']}]
+        object_type = 'owl:Axiom' if decomp_type == 'annotations' else 'rdf:Statement'
+        annodata['rdf:type'] = [{'object': object_type}]
+        for key in thick_row[decomp_type]:
+            annodata[key] = thick_row[decomp_type][key]
+        return annodata
 
-def thick2obj(thick_row):
-    log("In thick2obj. Received thick_row: {}".format(thick_row))
+    @nest_log
+    def obj2triples(thick_row):
+        global b_id
 
-    if 'object' not in thick_row and 'value' not in thick_row:
-        raise Exception(f"Don't know how to handle thick_row without value or object: {thick_row}")
-
-    def decompress_annotation(target, kind):
-        if isinstance(target, str):
-            target = {'owl:annotatedTarget': [{kind: target}]}
-        target['owl:annotatedSource'] = [{'object': thick_row['subject']}]
-        target['owl:annotatedProperty'] = [{'object': thick_row['predicate']}]
-        target['rdf:type'] = [{'object': 'owl:Axiom'}]
-        for key in thick_row['annotations']:
-            target[key] = thick_row['annotations'][key]
-        return target
-
-    def decompress_reification(target, kind):
-        if isinstance(target, str):
-            target = {'rdf:object': [{kind: target}]}
-        target['rdf:subject'] = [{'object': thick_row['subject']}]
-        target['rdf:predicate'] = [{'object': thick_row['predicate']}]
-        target['rdf:type'] = [{'object': 'rdf:Statement'}]
-        for key in thick_row['annotations']:
-            target[key] = thick_row['metadata'][key]
-        return target
-
-    def obj2obj(thick_row):
         target = thick_row['object']
         triples = []
-        if 'annotations' not in thick_row and 'metadata' not in thick_row:
-            if not isinstance(target, str):
-                triples = predicateMap2triples(target)
+        if isinstance(target, list):
+            for t in target:
+                triples += thick2triples(t['subject'], t['predicate'], t)
+            # This is extremely hacky but it should work because of the order in which the ids
+            # are generated here. See also the similar comment below. In that case ids are generated
+            # in ascending order.
+            next_id = b_id - 1
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(f"_:myb{next_id}")})
+        elif not isinstance(target, str):
+            # This is a hacky way of doing this, but the logic is right. We need to save
+            # the b_id here because predicateMap2Triples is a recursive function and it will
+            # increment the b_id every time it is called. What we need here is just whatever the
+            # next id will be.
+            next_id = b_id + 1
+            triples += predicateMap2triples(target)
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(f"_:myb{next_id}")})
         else:
-            if 'annotations' in thick_row:
-                triples += predicateMap2triples(decompress_annotation(target, 'object'))
-            if 'metadata' in thick_row:
-                triples += predicateMap2triples(decompress_reification(target, 'object'))
-        return target if not triples else triples
+            triples.append({'subject': create_node(_subject),
+                            'predicate': create_node(_predicate),
+                            'object': create_node(target)})
 
-    def val2obj(thick_row):
-        target = thick_row['value']
-        value_obj = {}
-        triples = []
+        if 'annotations' in thick_row:
+            triples += predicateMap2triples(decompress(thick_row, target, 'object', 'annotations'))
+
+        if 'metadata' in thick_row:
+            triples += predicateMap2triples(decompress(thick_row, target, 'object', 'metadata'))
+
+        return triples
+
+    @nest_log
+    def val2triples(thick_row):
+        target = value = thick_row['value']
         if 'datatype' in thick_row:
-            value_obj = {'value': target, 'datatype': thick_row['datatype']}
+            target = {'value': value, 'datatype': thick_row['datatype']}
         elif 'language' in thick_row:
-            value_obj = {'value': target, 'language': thick_row['language']}
+            target = {'value': value, 'language': thick_row['language']}
 
-        if 'annotations' not in thick_row and 'metadata' not in thick_row:
-            if not isinstance(target, str):
-                triples = predicateMap2triples(target)
-        else:
-            if 'annotations' in thick_row:
-                triples += predicateMap2triples(decompress_annotation(target, 'value'))
-            if 'metadata' in thick_row:
-                triples += predicateMap2triples(decompress_reification(target, 'value'))
-        return triples or value_obj or target
+        triples = [{'subject': create_node(_subject),
+                    'predicate': create_node(_predicate),
+                    'object': create_node(target)}]
 
-    if "object" in thick_row:
-        return obj2obj(thick_row)
-    elif 'value' in thick_row:
-        return val2obj(thick_row)
+        if 'annotations' in thick_row:
+            triples += predicateMap2triples(decompress(thick_row, target, 'value', 'annotations'))
 
-b = 0
-def predicateMap2triples(pred_map):
-    global b
-    b += 1
-    log("In predicateMap2triples. Received: {}".format(pred_map))
+        if 'metadata' in thick_row:
+            triples += predicateMap2triples(decompress(thick_row, target, 'value', 'metadata'))
 
-    bnode = f"_:myb{b}"
-    triples = []
-    for predicate, objects in pred_map.items():
-        for obj in objects:
-            obj = thick2obj(obj)
-            triples.append({'subject': bnode, 'predicate': predicate, 'object': obj})
-    return triples
+        return triples
 
-def thick2triples(thick_rows):
-    log("In thick2triples. Received thick_rows: {}".format(thick_rows))
+    if "object" in _thick_row:
+        return obj2triples(_thick_row)
+    elif 'value' in _thick_row:
+        return val2triples(_thick_row)
+
+@nest_log
+def thicks2triples(thick_rows):
     triples = []
     for row in thick_rows:
         if "object" in row:
             o = row["object"]
             if isinstance(o, str) and o.startswith("{"):
                 row["object"] = json.loads(o)
-
-        obj = thick2obj(row)
-        triples.append({'subject': row['subject'], 'predicate': row['predicate'], 'object': obj})
+        triples += thick2triples(row['subject'], row['predicate'], row)
     return triples
 
 owlTypes = ["owl:Restriction"]
 
+@nest_log
 def firstObject(predicates, predicate):
     """Given a prediate map, return the first 'object'."""
     if predicates.get(predicate):
         for obj in predicates[predicate]:
             if obj.get("object"):
                 return obj["object"]
+            elif obj.get('value'):
+                return obj["value"]
 
+    log("No object found")
 
+@nest_log
 def rdf2list(predicates):
     """Convert a nested RDF list to a simple list of objects.
     From
@@ -438,7 +495,7 @@ def rdf2list(predicates):
         return result + rdf2list(o["object"])
     return result
 
-
+@nest_log
 def rdf2ofs(predicates):
     """Given a predicate map, try to return an OWL Functional S-Expression.
     From
@@ -461,7 +518,7 @@ def rdf2ofs(predicates):
         raise Exception(f"Unhandled type '{rdfType}' for: {predicates}")
     return result
 
-
+@nest_log
 def thick2reasoned(thick):
     """Convert logical thick rows to reasoned rows.
     From
@@ -492,13 +549,13 @@ def thick2reasoned(thick):
             reasoned.append(result)
     return reasoned
 
-
+@nest_log
 def quote(label):
     if re.search(r'\W', label):
         return f"'{label}'"
     return label
 
-
+@nest_log
 def ofs2omn(labels, ofs):
     """Convert OFS to Manchester (OMN) with labels.
     From
@@ -515,7 +572,7 @@ def ofs2omn(labels, ofs):
     else:
         raise Exception(f"Unhandled expression type '{first}' for: {ofs}")
 
-
+@nest_log
 def po2rdfa(labels, predicate, obj):
     if isinstance(obj, str):
         obj = {"object": obj}
@@ -545,7 +602,7 @@ def po2rdfa(labels, predicate, obj):
     else:
         raise Exception(f"Unhandled object: {obj}")
 
-
+@nest_log
 def ofs2rdfa(labels, ofs):
     """Convert an OFS list to an HTML vector."""
     first = ofs[0]
@@ -559,7 +616,7 @@ def ofs2rdfa(labels, ofs):
     else:
         raise Exception(f"Unhandled expression type '{first}' for: {ofs}")
 
-
+@nest_log
 def rows2labels(rows):
     """Given a list of rows, return a map from subject to rdfs:label value."""
     labels = {}
@@ -568,7 +625,7 @@ def rows2labels(rows):
             labels[row["subject"]] = row["value"]
     return labels
 
-
+@nest_log
 def subject2rdfa(labels, subject_id, predicates):
     """Convert a subject_id and predicate map to an HTML vector."""
     html = ["ul"]
@@ -577,7 +634,7 @@ def subject2rdfa(labels, subject_id, predicates):
             html.append(["li", po2rdfa(labels, predicate, obj)])
     return ["li", subject_id, html]
 
-
+@nest_log
 def subjects2rdfa(labels, subjects):
     """Convert a subject_id and subjects map to an HTML vector."""
     html = ["ul"]
@@ -587,57 +644,91 @@ def subjects2rdfa(labels, subjects):
 
 
 if __name__ == "__main__":
-    rdfList = {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'A'}], 'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}], 'rdf:first': [{'value': 'B'}], 'rdf:rest': [{'object': 'rdf:nil'}]}}]}
+    p = ArgumentParser("prototype.py", description="First pass at thick triples prototype")
+    p.add_argument("-f", "--filter", nargs="+", default=[],
+                   help="filter only on the given comma-separated list of stanzas")
+    p.add_argument("-l", "--log", action='store_true')
+    p.add_argument('THIN', help='The file, in TSV format, that contains thin triples to convert.')
+    p.add_argument('ONTOLOGY', help='The ontology file to use for the round-trip test.')
+    args = p.parse_args()
+    debug = bool(args.log)
+    thin_input = args.THIN
+    expected_file = args.ONTOLOGY
+
+    rdfList = {'rdf:type': [{'object': 'rdf:List'}],
+               'rdf:first': [{'value': 'A'}],
+               'rdf:rest': [{'object': {'rdf:type': [{'object': 'rdf:List'}],
+                                        'rdf:first': [{'value': 'B'}],
+                                        'rdf:rest': [{'object': 'rdf:nil'}]}}]}
     log("List {}".format(rdf2ofs(rdfList)))
 
-    log("THIN ROWS:")
-    [log(row) for row in thin]
+    print("Reading in thin rows ...", file=sys.stderr)
+    with open(thin_input) as fh:
+        thin = list(csv.DictReader(fh, delimiter="\t"))
+    if args.filter:
+        pruned_thin = [row for row in thin if row['stanza'] in args.filter]
+    else:
+        pruned_thin = []
 
-    subjects = thin2subjects(thin)
-    #print("SUBJECTS:")
-    #print(pformat(subjects))
-    #renderSubjects(subjects)
-    #print("#############################################")
+    if args.filter and not pruned_thin:
+        print("WARNING No stanzas corresponding to {} in db".format(', '.join(args.filter)))
+    thin = thin if not pruned_thin else pruned_thin
 
-    thick = subjects2thick(subjects)
-    #print("THICK ROWS:")
-    #[print(row) for row in thick]
-    #print("#############################################")
+    ############################
+    ####### Generate thick rows
+    ############################
+    print("Generating thick rows ...", file=sys.stderr)
+    with open("build/prefixes.n3", "w") as fh:
+        for prefix in prefixes:
+            print("@prefix {}: {} .".format(prefix, prefixes[prefix].strip('<>')), file=fh)
 
-    #print("PREFIXES:")
-    #print(pformat(prefixes))
-    #print("#############################################")
+    thin_by_stanza = {}
+    for t in thin:
+        if t['stanza'] not in thin_by_stanza:
+            thin_by_stanza[t['stanza']] = []
+        thin_by_stanza[t['stanza']].append(t)
 
-    triples = thick2triples(thick)
-    #print("INTERIM TRIPLES:")
-    #print(pformat(triples))
-    #print("#############################################")
+    thick = []
+    for (stanza, thin) in thin_by_stanza.items():
+        subjects = thin2subjects(thin)
+        thick += subjects2thick(subjects)
 
-    actual = triples2graph(triples)
-    #print("TRIPLES:")
-    #render_graph(actual)
-    #print("#############################################")
+    #print(pformat(thick))
+    #sys.exit(0)
+
+    ############################
+    # Round-trip: go from thick rows to thin triples, build a graph, and then compare to the
+    # original.
+    ############################
+    print("Generating graph ...", file=sys.stderr)
+    triples = thicks2triples(thick)
+    with open("build/triples.json", "w") as fh:
+        print(pformat(triples), file=fh)
+
+    actual = Graph()
+    [actual.add((triple['subject'], triple['predicate'], triple['object'])) for triple in triples]
+    with open("build/triples.n3", "w") as fh:
+        render_graph(actual, fh)
 
     expected = Graph()
-    expected.parse('example.rdf')
+    if expected_file.endswith(".ttl"):
+        expected.parse(expected_file, format="ttl")
+    else:
+        expected.parse(expected_file)
 
-    #print("EXPECTED:")
-    #print(expected.serialize(format="n3").decode("utf-8"))
-    #for s, p, o in expected:
-    #    print("{}".format((s, p, o)))
-    #print("ACTUAL:")
-    #print(actual.serialize(format="n3").decode("utf-8"))
-    #for s, p, o in actual:
-    #    print("{}".format((s, p, o)))
+    with open("build/expected.ttl", "w") as fh:
+        print(expected.serialize(format="n3").decode("utf-8"), file=fh)
+    with open("build/actual.ttl", "w") as fh:
+        print(actual.serialize(format="n3").decode("utf-8"), file=fh)
 
-    print("COMPARING GRAPHS:")
+    print("Comparing graph to expected graph ...", file=sys.stderr)
     try:
-        compare_graphs(actual, expected)
+        compare_graphs(actual, expected, True)
     except AssertionError as e:
-        print("Graphs are not identical")
+        print("Graphs are not identical. Full dumps can be found in build/actual.ttl "
+              "and build/expected.ttl")
     else:
         print("Graphs are identical")
-  
 
     # Wait on this one for now ...
     #reasoned = thick2reasoned(thick)

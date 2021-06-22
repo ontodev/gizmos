@@ -18,23 +18,29 @@ POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", 5432))
 test_conn = {"host": POSTGRES_HOST, "database": "gizmos_test", "user": POSTGRES_USER, "password": POSTGRES_PW, "port": POSTGRES_PORT}
 
 
-def dump_ttl_sorted(graph):
-    for line in sorted(graph.serialize(format="ttl").splitlines()):
+def dump_ttl(graph, sort):
+    lines = graph.serialize(format="ttl").splitlines()
+    if sort:
+        lines.sort()
+    for line in lines:
         if line:
-            print(line.decode("ascii"))
+            try:
+                print(line.decode("ascii"))
+            except UnicodeDecodeError:
+                print(line)
 
-
-def compare_graphs(actual, expected):
+def compare_graphs(actual, expected, show_diff=False, sort=False):
     actual_iso = to_isomorphic(actual)
     expected_iso = to_isomorphic(expected)
 
     if actual_iso != expected_iso:
-        _, in_first, in_second = graph_diff(actual_iso, expected_iso)
         print("The actual and expected graphs differ")
-        print("----- Contents of actual graph not in expected graph -----")
-        dump_ttl_sorted(in_first)
-        print("----- Contents of expected graph not in actual graph -----")
-        dump_ttl_sorted(in_second)
+        if show_diff:
+            _, in_first, in_second = graph_diff(actual_iso, expected_iso)
+            print("----- Contents of actual graph not in expected graph -----")
+            dump_ttl(in_first, sort)
+            print("----- Contents of expected graph not in actual graph -----")
+            dump_ttl(in_second, sort)
 
     assert actual_iso == expected_iso
 
