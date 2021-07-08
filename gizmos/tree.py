@@ -997,7 +997,7 @@ def term2rdfa(
                     WHERE subject NOT IN 
                         (SELECT subject FROM statements
                          WHERE predicate = '{pred}'
-                         AND object IS NOT 'owl:Thing')
+                         AND object != 'owl:Thing')
                     AND subject IN 
                         (SELECT subject FROM statements 
                          WHERE predicate = 'rdf:type'
