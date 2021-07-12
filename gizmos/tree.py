@@ -1006,7 +1006,7 @@ def term2rdfa(
                 )
             children = [row[0] for row in cur.fetchall()]
             child_children = defaultdict(set)
-            if pred:
+            if pred and children:
                 # Get children of children for classes & properties
                 children_str = ", ".join([f"'{x}'" for x in children])
                 cur.execute(
