@@ -1,8 +1,6 @@
-import psycopg2
-import sqlite3
-
 from gizmos.search import search
-from util import test_conn, test_db, create_postgresql_db, create_sqlite_db
+from sqlalchemy import create_engine
+from util import create_postgresql_db, create_sqlite_db, postgres_url, sqlite_url
 
 
 def search_text(conn):
@@ -20,10 +18,12 @@ def search_text_with_options(conn):
 
 
 def test_search_postgresql(create_postgresql_db):
-    with psycopg2.connect(**test_conn) as conn:
+    engine = create_engine(postgres_url)
+    with engine.connect() as conn:
         search_text(conn)
 
 
 def test_search_sqlite(create_sqlite_db):
-    with sqlite3.connect(test_db) as conn:
+    engine = create_engine(sqlite_url)
+    with engine.connect() as conn:
         search_text(conn)

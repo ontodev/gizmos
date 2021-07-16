@@ -3,6 +3,7 @@ import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
+from sqlalchemy.engine.base import Connection
 from .helpers import get_connection
 
 
@@ -35,15 +36,29 @@ def main():
     )
 
 
-def search(conn, text, label="rdfs:label", short_label=None, synonyms=None, limit=30):
+def search(
+    conn: Connection,
+    text: str,
+    label: str = "rdfs:label",
+    short_label: str = None,
+    synonyms: list = None,
+    limit: int = 30,
+) -> str:
     """Return a string containing the search results in JSON format."""
     res = get_search_results(
-        conn, text, limit, label=label, short_label=short_label, synonyms=synonyms
+        conn, text, label=label, short_label=short_label, synonyms=synonyms, limit=limit
     )
     return json.dumps(res, indent=4)
 
 
-def get_search_results(conn, text, limit, label="rdfs:label", short_label=None, synonyms=None):
+def get_search_results(
+    conn: Connection,
+    text: str,
+    label: str = "rdfs:label",
+    short_label: str = None,
+    synonyms: list = None,
+    limit: int = 30,
+) -> list:
     """Return a list containing search results. Each search result has:
     - id
     - label
@@ -52,57 +67,58 @@ def get_search_results(conn, text, limit, label="rdfs:label", short_label=None, 
     - property
     - order"""
     names = defaultdict(dict)
-    cur = conn.cursor()
     if text:
         # Get labels
-        cur.execute(
+        results = conn.execute(
             f"""SELECT DISTINCT subject, value
                 FROM statements
                 WHERE predicate = '{label}'
-                AND value LIKE '%{text}%';"""
+                AND value LIKE '%%{text}%%';"""
         )
-        for res in cur.fetchall():
-            term_id = res[0]
+        for res in results:
+            term_id = res["subject"]
             if term_id not in names:
                 names[term_id] = dict()
-            names[term_id]["label"] = res[1]
+            names[term_id]["label"] = res["value"]
 
         # Get short labels
         if short_label:
             if short_label.lower() == "id":
-                cur.execute(f"SELECT DISTINCT stanza FROM statements WHERE stanza LIKE '%{text}%';")
-                for res in cur.fetchall():
-                    term_id = res[0]
+                results = conn.execute(
+                    f"SELECT DISTINCT stanza FROM statements WHERE stanza LIKE '%%{text}%%';"
+                )
+                for res in results:
+                    term_id = res["stanza"]
                     if term_id not in names:
                         names[term_id] = dict()
                     if term_id.startswith("<") and term_id.endswith(">"):
                         term_id = term_id[1:-1]
                     names[term_id]["short_label"] = term_id
             else:
-                cur.execute(
+                results = conn.execute(
                     f"""SELECT DISTINCT subject, value
                         FROM statements
                         WHERE predicate = '{short_label}'
-                        AND value LIKE '%{text}%';"""
+                        AND value LIKE '%%{text}%%';"""
                 )
-                for res in cur.fetchall():
-                    term_id = res[0]
+                for res in results:
+                    term_id = res["subject"]
                     if term_id not in names:
                         names[term_id] = dict()
-                    names[term_id]["short_label"] = res[1]
+                    names[term_id]["short_label"] = res["value"]
 
         # Get synonyms
         if synonyms:
             for syn in synonyms:
-                cur.execute(
+                results = conn.execute(
                     f"""SELECT DISTINCT subject, value
                         FROM statements
                         WHERE predicate = '{syn}'
-                        AND value LIKE '%{text}%';"""
+                        AND value LIKE '%%{text}%%';"""
                 )
-                for res in cur.fetchall():
-                    term_id = res[0]
-                    value = res[1]
+                for res in results:
+                    term_id = res["subject"]
+                    value = res["value"]
                     if term_id not in names:
                         names[term_id] = dict()
                         ts = dict()
@@ -147,13 +163,12 @@ def get_search_results(conn, text, limit, label="rdfs:label", short_label=None, 
         # Add the other, missing property values
         if not term_label:
             # Label did not match text, retrieve it to display
-            cur.execute(
+            res = conn.execute(
                 f"""SELECT DISTINCT value FROM statements
                     WHERE predicate = '{label}' AND stanza = '{term_id}'""",
-            )
-            res = cur.fetchone()
+            ).fetchone()
             if res:
-                term_label = res[0]
+                term_label = res["value"]
 
         if not term_short_label:
             # Short label did not match text, retrieve it to display
@@ -163,13 +178,12 @@ def get_search_results(conn, text, limit, label="rdfs:label", short_label=None, 
                 else:
                     term_short_label = term_id
             else:
-                cur.execute(
+                res = conn.execute(
                     f"""SELECT DISTINCT value FROM statements
                         WHERE predicate = '{short_label}' AND stanza = '{term_id}'"""
-                )
-                res = cur.fetchone()
+                ).fetchone()
                 if res:
-                    term_short_label = res[0]
+                    term_short_label = res["value"]
 
         term_to_match[term_id] = matched_value
         # Add results to JSON output

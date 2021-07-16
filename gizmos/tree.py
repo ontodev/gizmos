@@ -7,6 +7,7 @@ import sys
 from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import render
+from sqlalchemy.engine.base import Connection
 from .helpers import get_connection
 
 """
@@ -124,220 +125,26 @@ def main():
 
 
 def tree(
-    conn,
-    treename,
-    term,
-    href="?id={curie}",
-    title=None,
-    predicate_ids=None,
-    include_search=False,
-    standalone=True,
-):
-    cur = conn.cursor()
-    return build_tree(
-        cur,
-        treename,
-        term_id=term,
-        title=title,
-        href=href,
-        predicate_ids=predicate_ids,
-        include_search=include_search,
-        standalone=standalone,
-    )
-
-
-def annotations2rdfa(treename, data, predicate_ids, term_id, stanza, href="?term={curie}"):
-    """Create a hiccup-style vector for the annotation on a term."""
-    # The subjects in the stanza that are of type owl:Axiom:
-    annotation_bnodes = set()
-    for row in stanza:
-        if row["predicate"] == "owl:annotatedSource":
-            annotation_bnodes.add(row["subject"])
-
-    # Annotations, etc. on the right-hand side for the subjects contained in
-    # annotation_bnodes:
-    annotations = defaultdict(dict)
-    for row in stanza:
-        # subject is the blank node, _:...
-        subject = row["subject"]
-        if subject not in annotation_bnodes:
-            continue
-
-        if subject not in annotations:
-            annotations[subject] = {}
-
-        predicate = row["predicate"]
-        obj = row["object"]
-        value = row["value"]
-
-        if predicate not in [
-            "owl:annotatedSource",
-            "owl:annotatedTarget",
-            "owl:annotatedProperty",
-            "rdf:type",
-        ]:
-            # This is the actual axiom that we care about and contains display value
-            annotations[subject]["predicate"] = predicate
-            if obj:
-                annotations[subject]["object"] = obj
-            if value:
-                annotations[subject]["value"] = value
-            annotations[subject]["annotation"] = row
-
-        if predicate == "owl:annotatedSource":
-            annotations[subject]["source"] = obj
-
-        elif predicate == "owl:annotatedProperty":
-            annotations[subject]["target_predicate"] = obj
-
-        elif predicate == "owl:annotatedTarget":
-            if obj:
-                annotations[subject]["target_object"] = obj
-            if value:
-                annotations[subject]["target_value"] = value
-
-    spv2annotation = {}
-    for bnode, details in annotations.items():
-        source = details["source"]
-        target_predicate = details["target_predicate"]
-        target = details.get("target_object", None) or details.get("target_value", None)
-
-        if source in spv2annotation:
-            # list of predicate -> values on this target (combo of predicate + value)
-            pred2val = spv2annotation[source]
-        else:
-            pred2val = {}
-
-        if target_predicate in pred2val:
-            annotated_values = pred2val[target_predicate]
-        else:
-            annotated_values = {}
-
-        if target in annotated_values:
-            ax_annotations = annotated_values[target]
-        else:
-            ax_annotations = {}
-
-        # predicate of the annotation
-        ann_predicate = details["predicate"]
-        if ann_predicate in ax_annotations:
-            # values of the annotation
-            anns = ax_annotations[ann_predicate]
-        else:
-            anns = []
-        anns.append(details["annotation"])
-
-        ax_annotations[ann_predicate] = anns
-        annotated_values[target] = ax_annotations
-        pred2val[target_predicate] = annotated_values
-        spv2annotation[source] = pred2val
-
-    # The initial hiccup, which will be filled in later:
-    items = ["ul", {"id": "annotations", "class": "col-md"}]
-    labels = data["labels"]
-
-    # s2 maps the predicates of the given term to their corresponding rows (there can be more than
-    # one row per predicate):
-    s2 = defaultdict(list)
-    for row in stanza:
-        if row["subject"] == term_id:
-            s2[row["predicate"]].append(row)
-    pcs = list(s2.keys())
-
-    # Loop through the rows of the stanza that correspond to the predicates of the given term:
-    for predicate in predicate_ids:
-        if predicate not in pcs:
-            continue
-        predicate_label = predicate
-        if predicate.startswith("<"):
-            predicate_label = predicate.lstrip("<").rstrip(">")
-        anchor = [
-            "a",
-            {"href": href.format(curie=predicate, db=treename)},
-            labels.get(predicate, predicate_label),
-        ]
-        # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
-        objs = []
-        for row in s2[predicate]:
-            # Convert the `data` map, that has entries for the tree and for a list of the labels
-            # corresponding to all of the curies in the stanza, into a hiccup object `o`:
-            o = ["li", row2o(stanza, data, row)]
-
-            # Check for axiom annotations and create nested
-            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
-            if nest:
-                o += nest
-
-            # Append the `o` to the list of `os`:
-            objs.append(o)
-        if objs:
-            items.append(["li", anchor, ["ul"] + objs])
-    return items
-
-
-def build_nested(treename, data, labels, spv2annotation, source, row, ele, href="?id={curie}"):
-    """Build a nested hiccup list of axiom annotations."""
-    predicate = row["predicate"]
-    if source in spv2annotation:
-        annotated_predicates = spv2annotation[source]
-        if predicate in annotated_predicates:
-            annotated_values = annotated_predicates[predicate]
-            target = row.get("object", None) or row.get("value", None)
-            if target in annotated_values:
-                ax_annotations = annotated_values[target]
-                for ann_predicate, ann_rows in ax_annotations.items():
-                    # Build the nested list "anchor" (predicate)
-                    anchor = [
-                        "li",
-                        [
-                            "small",
-                            [
-                                "a",
-                                {"href": href.format(curie=ann_predicate, db=treename)},
-                                labels.get(ann_predicate, ann_predicate),
-                            ],
-                        ],
-                    ]
-
-                    # Collect the axiom annotation objects/values
-                    ax_os = []
-                    for ar in ann_rows:
-                        ax_os.append(["li", ["small", row2o([], data, ar)]])
-                        build_nested(
-                            treename,
-                            data,
-                            labels,
-                            spv2annotation,
-                            ar["subject"],
-                            ar,
-                            ax_os,
-                            href=href,
-                        )
-                    ele.append(["ul", anchor, ["ul"] + ax_os])
-    return ele
-
-
-def build_tree(
-    cur,
-    treename,
-    term_id=None,
-    title=None,
-    href="?id={curie}",
-    predicate_ids=None,
-    include_search=False,
-    standalone=True,
-):
-    """Create a hiccup-style HTML vector for the given terms.
-    If there are no terms, create the HTML vector for all top-level classes."""
+    conn: Connection,
+    treename: str,
+    term_id: str,
+    href: str = "?id={curie}",
+    title: str = None,
+    predicate_ids: list = None,
+    include_search: bool = False,
+    standalone: bool = True,
+) -> str:
+    """Create an HTML/RDFa tree for the given term.
+    If term_id is None, create the tree for owl:Class."""
     # Get the prefixes
-    cur.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
-    all_prefixes = [(x[0], x[1]) for x in cur.fetchall()]
+    results = conn.execute("SELECT * FROM prefix ORDER BY length(base) DESC")
+    all_prefixes = [(x["prefix"], x["base"]) for x in results]
 
     ps = set()
     body = []
     if not term_id:
         p, t = term2rdfa(
-            cur, all_prefixes, treename, predicate_ids, "owl:Class", [], title=title, href=href
+            conn, all_prefixes, treename, [], "owl:Class", [], title=title, href=href
         )
         ps.update(p)
         body.append(t)
@@ -363,22 +170,25 @@ def build_tree(
         if predicate_ids and predicate_ids_split:
             # If some IDs were provided with *, add the remaining predicates
             # These properties go in between the before & after defined in the split
-            rem_predicate_ids = get_sorted_predicates(cur, exclude_ids=predicate_ids)
+            rem_predicate_ids = get_sorted_predicates(conn, exclude_ids=predicate_ids)
 
             # Separate before & after with the remaining properties
             predicate_ids = predicate_ids_split[0]
             predicate_ids.extend(rem_predicate_ids)
             predicate_ids.extend(predicate_ids_split[1])
         elif not predicate_ids:
-            predicate_ids = get_sorted_predicates(cur)
+            predicate_ids = get_sorted_predicates(conn)
 
-        cur.execute(
+        results = conn.execute(
             f"""SELECT stanza, subject, predicate, object, value, datatype, language
-                FROM statements WHERE stanza = '{term_id}'"""
+                    FROM statements WHERE stanza = '{term_id}'"""
         )
-        stanza = create_stanza(cur.fetchall())
+        stanza = []
+        for res in results:
+            stanza.append(dict(res))
+
         p, t = term2rdfa(
-            cur, all_prefixes, treename, predicate_ids, term_id, stanza, title=title, href=href
+            conn, all_prefixes, treename, predicate_ids, term_id, stanza, title=title, href=href
         )
         ps.update(p)
         body.append(t)
@@ -432,15 +242,15 @@ def build_tree(
 
     # Custom JS for show more children
     js = """function show_children() {
-        hidden = $('#children li:hidden').slice(0, 100);
-        if (hidden.length > 1) {
-            hidden.show();
-            setTimeout(show_children, 100);
-        } else {
-            console.log("DONE");
-        }
-        $('#more').hide();
-    }"""
+            hidden = $('#children li:hidden').slice(0, 100);
+            if (hidden.length > 1) {
+                hidden.show();
+                setTimeout(show_children, 100);
+            } else {
+                console.log("DONE");
+            }
+            $('#more').hide();
+        }"""
 
     # Custom JS for search bar using Typeahead
     if include_search:
@@ -456,97 +266,97 @@ def build_tree(
             # Add tree name to query params
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
-            """
-$('#search-form').submit(function () {
-    $(this)
-        .find('input[name]')
-        .filter(function () {
-            return !this.value;
-        })
-        .prop('name', '');
-});
-function jump(currentPage) {
-  newPage = prompt("Jump to page", currentPage);
-  if (newPage) {
-    href = window.location.href.replace("page="+currentPage, "page="+newPage);
-    window.location.href = href;
-  }
-}
-function configure_typeahead(node) {
-  if (!node.id || !node.id.endsWith("-typeahead")) {
-    return;
-  }
-  table = node.id.replace("-typeahead", "");
-  var bloodhound = new Bloodhound({
-    datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
-    queryTokenizer: Bloodhound.tokenizers.nonword,
-    sorter: function(a, b) {
-      return a.order - b.order;
-    },
-    remote: {
-      url: """
-            + remote
-            + """,
-      wildcard: '%QUERY',
-      transform : function(response) {
-          return bloodhound.sorter(response);
+                """
+    $('#search-form').submit(function () {
+        $(this)
+            .find('input[name]')
+            .filter(function () {
+                return !this.value;
+            })
+            .prop('name', '');
+    });
+    function jump(currentPage) {
+      newPage = prompt("Jump to page", currentPage);
+      if (newPage) {
+        href = window.location.href.replace("page="+currentPage, "page="+newPage);
+        window.location.href = href;
       }
     }
-  });
-  $(node).typeahead({
-    minLength: 0,
-    hint: false,
-    highlight: true
-  }, {
-    name: table,
-    source: bloodhound,
-    display: function(item) {
-      if (item.label && item.short_label && item.synonym) {
-        return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
-      } else if (item.label && item.short_label) {
-        return item.short_label + ' - ' + item.label;
-      } else if (item.label && item.synonym) {
-        return item.label + ' - ' + item.synonym;
-      } else if (item.short_label && item.synonym) {
-        return item.short_label + ' - ' + item.synonym;
-      } else if (item.short_label && !item.label) {
-        return item.short_label;
-      } else {
-        return item.label;
+    function configure_typeahead(node) {
+      if (!node.id || !node.id.endsWith("-typeahead")) {
+        return;
       }
-    },
-    limit: 40
-  });
-  $(node).bind('click', function(e) {
-    $(node).select();
-  });
-  $(node).bind('typeahead:select', function(ev, suggestion) {
-    $(node).prev().val(suggestion.id);
-    go(table, suggestion.id);
-  });
-  $(node).bind('keypress',function(e) {
-    if(e.which == 13) {
-      go(table, $('#' + table + '-hidden').val());
+      table = node.id.replace("-typeahead", "");
+      var bloodhound = new Bloodhound({
+        datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
+        queryTokenizer: Bloodhound.tokenizers.nonword,
+        sorter: function(a, b) {
+          return a.order - b.order;
+        },
+        remote: {
+          url: """
+                + remote
+                + """,
+          wildcard: '%QUERY',
+          transform : function(response) {
+              return bloodhound.sorter(response);
+          }
+        }
+      });
+      $(node).typeahead({
+        minLength: 0,
+        hint: false,
+        highlight: true
+      }, {
+        name: table,
+        source: bloodhound,
+        display: function(item) {
+          if (item.label && item.short_label && item.synonym) {
+            return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
+          } else if (item.label && item.short_label) {
+            return item.short_label + ' - ' + item.label;
+          } else if (item.label && item.synonym) {
+            return item.label + ' - ' + item.synonym;
+          } else if (item.short_label && item.synonym) {
+            return item.short_label + ' - ' + item.synonym;
+          } else if (item.short_label && !item.label) {
+            return item.short_label;
+          } else {
+            return item.label;
+          }
+        },
+        limit: 40
+      });
+      $(node).bind('click', function(e) {
+        $(node).select();
+      });
+      $(node).bind('typeahead:select', function(ev, suggestion) {
+        $(node).prev().val(suggestion.id);
+        go(table, suggestion.id);
+      });
+      $(node).bind('keypress',function(e) {
+        if(e.which == 13) {
+          go(table, $('#' + table + '-hidden').val());
+        }
+      });
     }
-  });
-}
-$('.typeahead').each(function() { configure_typeahead(this); });
-function go(table, value) {
-  q = {}
-  table = table.replace('_all', '');
-  q[table] = value
-  window.location = query(q);
-}
-function query(obj) {
-  var str = [];
-  for (var p in obj)
-    if (obj.hasOwnProperty(p)) {
-      """
-            + js_funct
-            + """
+    $('.typeahead').each(function() { configure_typeahead(this); });
+    function go(table, value) {
+      q = {}
+      table = table.replace('_all', '');
+      q[table] = value
+      window.location = query(q);
     }
-  return str.join("&");
-}"""
+    function query(obj) {
+      var str = [];
+      for (var p in obj)
+        if (obj.hasOwnProperty(p)) {
+          """
+                + js_funct
+                + """
+        }
+      return str.join("&");
+    }"""
         )
 
     body.append(["script", {"type": "text/javascript"}, js])
@@ -683,28 +493,181 @@ function query(obj) {
     return render(all_prefixes, html, href=href, db=treename)
 
 
-def create_stanza(results):
-    """Create a dictionary version of the results of the stanza query"""
-    stanza = []
-    for row in results:
-        stanza.append(
-            {
-                "stanza": row[0],
-                "subject": row[1],
-                "predicate": row[2],
-                "object": row[3],
-                "value": row[4],
-                "datatype": row[5],
-                "language": row[6],
-            }
-        )
-    return stanza
+def annotations2rdfa(treename: str, data: dict, predicate_ids: list, term_id: str, stanza: list, href: str = "?term={curie}") -> list:
+    """Create a hiccup-style vector for the annotation on a term."""
+    # The subjects in the stanza that are of type owl:Axiom:
+    annotation_bnodes = set()
+    for row in stanza:
+        if row["predicate"] == "owl:annotatedSource":
+            annotation_bnodes.add(row["subject"])
+
+    # Annotations, etc. on the right-hand side for the subjects contained in
+    # annotation_bnodes:
+    annotations = defaultdict(dict)
+    for row in stanza:
+        # subject is the blank node, _:...
+        subject = row["subject"]
+        if subject not in annotation_bnodes:
+            continue
+
+        if subject not in annotations:
+            annotations[subject] = {}
+
+        predicate = row["predicate"]
+        obj = row["object"]
+        value = row["value"]
+
+        if predicate not in [
+            "owl:annotatedSource",
+            "owl:annotatedTarget",
+            "owl:annotatedProperty",
+            "rdf:type",
+        ]:
+            # This is the actual axiom that we care about and contains display value
+            annotations[subject]["predicate"] = predicate
+            if obj:
+                annotations[subject]["object"] = obj
+            if value:
+                annotations[subject]["value"] = value
+            annotations[subject]["annotation"] = row
+
+        if predicate == "owl:annotatedSource":
+            annotations[subject]["source"] = obj
+
+        elif predicate == "owl:annotatedProperty":
+            annotations[subject]["target_predicate"] = obj
+
+        elif predicate == "owl:annotatedTarget":
+            if obj:
+                annotations[subject]["target_object"] = obj
+            if value:
+                annotations[subject]["target_value"] = value
+
+    spv2annotation = {}
+    for bnode, details in annotations.items():
+        source = details["source"]
+        target_predicate = details["target_predicate"]
+        target = details.get("target_object", None) or details.get("target_value", None)
+
+        if source in spv2annotation:
+            # list of predicate -> values on this target (combo of predicate + value)
+            pred2val = spv2annotation[source]
+        else:
+            pred2val = {}
+
+        if target_predicate in pred2val:
+            annotated_values = pred2val[target_predicate]
+        else:
+            annotated_values = {}
+
+        if target in annotated_values:
+            ax_annotations = annotated_values[target]
+        else:
+            ax_annotations = {}
+
+        # predicate of the annotation
+        ann_predicate = details["predicate"]
+        if ann_predicate in ax_annotations:
+            # values of the annotation
+            anns = ax_annotations[ann_predicate]
+        else:
+            anns = []
+        anns.append(details["annotation"])
+
+        ax_annotations[ann_predicate] = anns
+        annotated_values[target] = ax_annotations
+        pred2val[target_predicate] = annotated_values
+        spv2annotation[source] = pred2val
+
+    # The initial hiccup, which will be filled in later:
+    items = ["ul", {"id": "annotations", "class": "col-md"}]
+    labels = data["labels"]
+
+    # s2 maps the predicates of the given term to their corresponding rows (there can be more than
+    # one row per predicate):
+    s2 = defaultdict(list)
+    for row in stanza:
+        if row["subject"] == term_id:
+            s2[row["predicate"]].append(row)
+    pcs = list(s2.keys())
+
+    # Loop through the rows of the stanza that correspond to the predicates of the given term:
+    for predicate in predicate_ids:
+        if predicate not in pcs:
+            continue
+        predicate_label = predicate
+        if predicate.startswith("<"):
+            predicate_label = predicate.lstrip("<").rstrip(">")
+        anchor = [
+            "a",
+            {"href": href.format(curie=predicate, db=treename)},
+            labels.get(predicate, predicate_label),
+        ]
+        # Initialise an empty list of "o"s, i.e., hiccup representations of objects:
+        objs = []
+        for row in s2[predicate]:
+            # Convert the `data` map, that has entries for the tree and for a list of the labels
+            # corresponding to all of the curies in the stanza, into a hiccup object `o`:
+            o = ["li", row2o(stanza, data, row)]
+
+            # Check for axiom annotations and create nested
+            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
+            if nest:
+                o += nest
+
+            # Append the `o` to the list of `os`:
+            objs.append(o)
+        if objs:
+            items.append(["li", anchor, ["ul"] + objs])
+    return items
 
 
-def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id={curie}"):
+def build_nested(treename: str, data: dict, labels: dict, spv2annotation: dict, source: str, row: dict, ele: list, href: str = "?id={curie}") -> list:
+    """Build a nested hiccup list of axiom annotations."""
+    predicate = row["predicate"]
+    if source in spv2annotation:
+        annotated_predicates = spv2annotation[source]
+        if predicate in annotated_predicates:
+            annotated_values = annotated_predicates[predicate]
+            target = row.get("object", None) or row.get("value", None)
+            if target in annotated_values:
+                ax_annotations = annotated_values[target]
+                for ann_predicate, ann_rows in ax_annotations.items():
+                    # Build the nested list "anchor" (predicate)
+                    anchor = [
+                        "li",
+                        [
+                            "small",
+                            [
+                                "a",
+                                {"href": href.format(curie=ann_predicate, db=treename)},
+                                labels.get(ann_predicate, ann_predicate),
+                            ],
+                        ],
+                    ]
+
+                    # Collect the axiom annotation objects/values
+                    ax_os = []
+                    for ar in ann_rows:
+                        ax_os.append(["li", ["small", row2o([], data, ar)]])
+                        build_nested(
+                            treename,
+                            data,
+                            labels,
+                            spv2annotation,
+                            ar["subject"],
+                            ar,
+                            ax_os,
+                            href=href,
+                        )
+                    ele.append(["ul", anchor, ["ul"] + ax_os])
+    return ele
+
+
+def thing2rdfa(conn: Connection, all_prefixes: list, treename: str, predicate_ids: list, title: str = None, href: str = "?id={curie}"):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
-    cur.execute(
+    results = conn.execute(
         """SELECT DISTINCT subject FROM statements 
         WHERE subject NOT IN 
             (SELECT subject FROM statements
@@ -712,15 +675,16 @@ def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id
         AND subject IN 
             (SELECT subject FROM statements 
              WHERE predicate = 'rdf:type'
-             AND object = 'owl:Class' AND subject NOT LIKE '_:%');"""
+             AND object = 'owl:Class' AND subject NOT LIKE '_:%%');"""
     )
-    res = cur.fetchall()
-    add_children = [x[0] for x in res if x[0] != "owl:Thing"]
-    cur.execute(
+    add_children = [x["subject"] for x in results if x["subject"] != "owl:Thing"]
+    results = conn.execute(
         """SELECT stanza, subject, predicate, object, value, datatype, language
            FROM statements WHERE stanza = 'owl:Thing'"""
     )
-    stanza = cur.fetchall()
+    stanza = []
+    for res in results:
+        stanza.append(dict(res))
     if not stanza:
         stanza = [
             {
@@ -733,22 +697,10 @@ def thing2rdfa(cur, all_prefixes, treename, predicate_ids, title=None, href="?id
                 "language": None,
             }
         ]
-    else:
-        stanza = create_stanza(cur.fetchall())
-    return term2rdfa(
-        cur,
-        all_prefixes,
-        treename,
-        stanza,
-        "owl:Thing",
-        predicate_ids,
-        title=title,
-        href=href,
-        add_children=add_children,
-    )
+    return term2rdfa(conn, all_prefixes, treename, predicate_ids, "owl:Thing", stanza, title=title, add_children=add_children, href=href)
 
 
-def curie2iri(prefixes, curie):
+def curie2iri(prefixes: list, curie: str) -> str:
     """Convert a CURIE to IRI"""
     if curie.startswith("<"):
         return curie.lstrip("<").rstrip(">")
@@ -758,36 +710,35 @@ def curie2iri(prefixes, curie):
     raise ValueError(f"No matching prefix for {curie}")
 
 
-def get_entity_type(cur, term_id):
+def get_entity_type(conn: Connection, term_id: str) -> str:
     """Get the OWL entity type for a term."""
-    cur.execute(
+    results = list(conn.execute(
         f"""SELECT object FROM statements
             WHERE stanza = '{term_id}' AND subject = '{term_id}' AND predicate = 'rdf:type'"""
-    )
-    res = cur.fetchall()
-    if len(res) > 1:
-        for r in res:
-            if r[0] in TOP_LEVELS:
-                return r[0]
+    ))
+    if len(results) > 1:
+        for res in results:
+            if res["object"] in TOP_LEVELS:
+                return res["object"]
         return "owl:Individual"
-    elif len(res) == 1:
-        entity_type = res[0][0]
+    elif len(results) == 1:
+        entity_type = results[0]["object"]
         if entity_type == "owl:NamedIndividual":
             entity_type = "owl:Individual"
         return entity_type
     else:
         entity_type = None
-        cur.execute(
+        results = conn.execute(
             f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'"
         )
-        preds = [row[0] for row in cur.fetchall()]
+        preds = [row["predicate"] for row in results]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
         elif "rdfs:subPropertyOf" in preds:
             return "owl:AnnotationProperty"
         if not entity_type:
-            cur.execute(f"SELECT predicate FROM statements WHERE object = '{term_id}'")
-            preds = [row[0] for row in cur.fetchall()]
+            results = conn.execute(f"SELECT predicate FROM statements WHERE object = '{term_id}'")
+            preds = [row["predicate"] for row in results]
             if "rdfs:subClassOf" in preds:
                 return "owl:Class"
             elif "rdfs:subPropertyOf" in preds:
@@ -795,24 +746,23 @@ def get_entity_type(cur, term_id):
     return "owl:Class"
 
 
-def get_hierarchy(cur, term_id, entity_type, add_children=None):
+def get_hierarchy(conn: Connection, term_id: str, entity_type: str, add_children: list = None) -> (dict, set):
     """Return a hierarchy dictionary for a term and all its ancestors and descendants."""
     # Build the hierarchy
     if entity_type == "owl:Individual":
-        cur.execute(
+        results = conn.execute(
             f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
                 WHERE stanza = '{term_id}'
                  AND subject = '{term_id}'
                  AND predicate = 'rdf:type'
                  AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
-                 AND object NOT LIKE '_:%'"""
+                 AND object NOT LIKE '_:%%'"""
         )
-        res = cur.fetchall()
     else:
         pred = "rdfs:subPropertyOf"
         if entity_type == "owl:Class":
             pred = "rdfs:subClassOf"
-        cur.execute(
+        results = conn.execute(
             f"""WITH RECURSIVE ancestors(parent, child) AS (
                 VALUES ('{term_id}', NULL)
                 UNION
@@ -834,22 +784,22 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
                 FROM statements, ancestors
                 WHERE ancestors.parent = statements.stanza
                   AND statements.predicate = '{pred}'
-                  AND statements.object NOT LIKE '_:%'
+                  AND statements.object NOT LIKE '_:%%'
               )
               SELECT * FROM ancestors"""
         )
-        res = cur.fetchall()
+    results = [[x["parent"], x["child"]] for x in results]
     if add_children:
-        res.extend([[term_id, child] for child in add_children])
+        results.extend([[term_id, child] for child in add_children])
 
     hierarchy = {
         entity_type: {"parents": [], "children": []},
         term_id: {"parents": [], "children": []},
     }
     curies = set()
-    for row in res:
+    for res in results:
         # Consider the parent column of the current row:
-        parent = row[0]
+        parent = res[0]
         if not parent or parent == "owl:Thing":
             continue
         # If it is not null, add it to the list of all of the compact URIs described by this tree:
@@ -862,7 +812,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
             }
 
         # Consider the child column of the current row:
-        child = row[1]
+        child = res[1]
         if not child:
             continue
         # If it is not null, add it to the list of all the compact URIs described by this tree:
@@ -891,7 +841,7 @@ def get_hierarchy(cur, term_id, entity_type, add_children=None):
     return hierarchy, curies
 
 
-def get_sorted_predicates(cur, exclude_ids=None):
+def get_sorted_predicates(conn: Connection, exclude_ids: list = None) -> list:
     """Return a list of predicates IDs sorted by their label, optionally excluding some predicate
     IDs. If the predicate does not have a label, use the ID as the label."""
     exclude = None
@@ -899,18 +849,18 @@ def get_sorted_predicates(cur, exclude_ids=None):
         exclude = ", ".join([f"'{x}'" for x in exclude_ids])
 
     # Retrieve all predicate IDs
-    cur.execute("SELECT DISTINCT predicate FROM statements")
-    all_predicate_ids = [x[0] for x in cur.fetchall()]
+    results = conn.execute("SELECT DISTINCT predicate FROM statements")
+    all_predicate_ids = [x["predicate"] for x in results]
     if exclude:
         all_predicate_ids = [x for x in all_predicate_ids if x not in exclude_ids]
 
     # Retrieve predicates with labels
     ap_str = ", ".join([f"'{x}'" for x in all_predicate_ids])
-    cur.execute(
+    results = conn.execute(
         f"""SELECT DISTINCT subject, value
         FROM statements WHERE subject IN ({ap_str}) AND predicate = 'rdfs:label';"""
     )
-    predicate_label_map = {x[0]: x[1] for x in cur.fetchall()}
+    predicate_label_map = {x["subject"]: x["value"] for x in results}
 
     # Add unlabeled predicates to map with label = ID
     for p in all_predicate_ids:
@@ -921,45 +871,49 @@ def get_sorted_predicates(cur, exclude_ids=None):
     return [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
 
 
-def get_ontology(cur, prefixes):
-    cur.execute(
+def get_ontology(conn: Connection, prefixes: list) -> (str, str):
+    """Get the ontology IRI and title (or None).
+
+    :param conn: database connection
+    :param prefixes: list of prefix tuples (prefix, base)
+    :return: IRI, title or None
+    """
+    res = conn.execute(
         "SELECT subject FROM statements WHERE predicate = 'rdf:type' AND object = 'owl:Ontology'"
-    )
-    res = cur.fetchone()
+    ).fetchone()
     if not res:
         return None, None
-    iri = res[0]
+    iri = res["subject"]
     dct = "<http://purl.org/dc/terms/title>"
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
-    cur.execute(
+    res = conn.execute(
         f"""SELECT value FROM statements
             WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'"""
-    )
-    res = cur.fetchone()
+    ).fetchone()
     if not res:
         return iri, None
-    return iri, res[0]
+    return iri, res["value"]
 
 
 def term2rdfa(
-    cur,
-    prefixes,
-    treename,
-    predicate_ids,
-    term_id,
-    stanza,
-    title=None,
-    add_children=None,
-    href="?id={curie}",
-):
+    conn: Connection,
+    prefixes: list,
+    treename: str,
+    predicate_ids: list,
+    term_id: str,
+    stanza: list,
+    title: str = None,
+    add_children: list = None,
+    href: str = "?id={curie}",
+) -> (str, str):
     """Create a hiccup-style HTML vector for the given term."""
-    ontology_iri, ontology_title = get_ontology(cur, prefixes)
+    ontology_iri, ontology_title = get_ontology(conn, prefixes)
     if term_id not in TOP_LEVELS:
         # Get a hierarchy under the entity type
-        entity_type = get_entity_type(cur, term_id)
-        hierarchy, curies = get_hierarchy(cur, term_id, entity_type, add_children=add_children)
+        entity_type = get_entity_type(conn, term_id)
+        hierarchy, curies = get_hierarchy(conn, term_id, entity_type, add_children=add_children)
     else:
         # Get the top-level for this entity type
         entity_type = term_id
@@ -972,7 +926,7 @@ def term2rdfa(
             pred = None
             if term_id == "owl:Individual":
                 tls = ", ".join([f"'{x}'" for x in TOP_LEVELS.keys()])
-                cur.execute(
+                results = conn.execute(
                     f"""SELECT DISTINCT subject FROM statements
                     WHERE subject NOT IN
                         (SELECT subject FROM statements
@@ -983,7 +937,7 @@ def term2rdfa(
                          WHERE predicate = 'rdf:type' AND object NOT IN ({tls}))"""
                 )
             elif term_id == "rdfs:Datatype":
-                cur.execute(
+                results = conn.execute(
                     """SELECT DISTINCT subject FROM statements
                     WHERE predicate = 'rdf:type' AND object = 'rdfs:Datatype'"""
                 )
@@ -992,7 +946,7 @@ def term2rdfa(
                 if term_id == "owl:Class":
                     pred = "rdfs:subClassOf"
                 # Select all classes without parents and set them as children of owl:Thing
-                cur.execute(
+                results = conn.execute(
                     f"""SELECT DISTINCT subject FROM statements 
                     WHERE subject NOT IN 
                         (SELECT subject FROM statements
@@ -1001,23 +955,23 @@ def term2rdfa(
                     AND subject IN 
                         (SELECT subject FROM statements 
                          WHERE predicate = 'rdf:type'
-                         AND object = '{term_id}' AND subject NOT LIKE '_:%'
+                         AND object = '{term_id}' AND subject NOT LIKE '_:%%'
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
                 )
-            children = [row[0] for row in cur.fetchall()]
+            children = [res["subject"] for res in results]
             child_children = defaultdict(set)
-            if pred:
+            if pred and children:
                 # Get children of children for classes & properties
                 children_str = ", ".join([f"'{x}'" for x in children])
-                cur.execute(
+                results = conn.execute(
                     f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
                     WHERE predicate = '{pred}' AND object IN ({children_str})"""
                 )
-                for row in cur.fetchall():
-                    p = row[0]
+                for res in results:
+                    p = res["parent"]
                     if p not in child_children:
                         child_children[p] = set()
-                    child_children[p].add(row[1])
+                    child_children[p].add(res["child"])
             hierarchy = {term_id: {"parents": [], "children": children}}
             curies = {term_id}
             for c in children:
@@ -1047,30 +1001,30 @@ def term2rdfa(
     # from compact URIs to labels:
     labels = {}
     ids = "', '".join(curies)
-    cur.execute(
+    results = conn.execute(
         f"""SELECT subject, value
       FROM statements
       WHERE stanza IN ('{ids}')
         AND predicate = 'rdfs:label'
         AND value IS NOT NULL"""
     )
-    for row in cur.fetchall():
-        labels[row[0]] = row[1]
+    for res in results:
+        labels[res["subject"]] = res["value"]
     for t, o_label in TOP_LEVELS.items():
         labels[t] = o_label
     if ontology_iri and ontology_title:
         labels[ontology_iri] = ontology_title
 
     obsolete = []
-    cur.execute(
+    results = conn.execute(
         f"""SELECT DISTINCT subject
             FROM statements
             WHERE stanza in ('{ids}')
               AND predicate='owl:deprecated'
               AND value='true'"""
     )
-    for row in cur:
-        obsolete.append(row[0])
+    for res in results:
+        obsolete.append(res["subject"])
 
     # If the compact URIs in the labels map are also in the tree, then add the label info to the
     # corresponding node in the tree:
@@ -1102,11 +1056,11 @@ def term2rdfa(
     si = None
     subject_label = None
     if term_id == "ontology" and ontology_iri:
-        cur.execute(
+        # TODO - is this stanza used?
+        results = conn.execute(
             f"""SELECT stanza, subject, predicate, object, value, datatype, language FROM statements
             WHERE subject = '{ontology_iri}'"""
         )
-        stanza = create_stanza(cur.fetchall())
         subject = ontology_iri
         subject_label = data["labels"].get(ontology_iri, ontology_iri)
         si = curie2iri(prefixes, subject)
@@ -1171,7 +1125,7 @@ def term2rdfa(
     return ps, term
 
 
-def parent2tree(data, treename, selected_term, selected_children, node, href="?id={curie}"):
+def parent2tree(data: dict, treename: str, selected_term, selected_children, node, href="?id={curie}") -> list:
     """Return a hiccup-style HTML vector of the full hierarchy for a parent node."""
     cur_hierarchy = ["ul", ["li", tree_label(data, treename, selected_term), selected_children]]
     if node in TOP_LEVELS:
@@ -1221,10 +1175,10 @@ def parent2tree(data, treename, selected_term, selected_children, node, href="?i
     return cur_hierarchy
 
 
-def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_children=100):
+def term2tree(data: dict, treename: str, term_id: str, entity_type: str, href: str = "?id={curie}", max_children: int = 100) -> list:
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
-        return ""
+        return []
 
     term_tree = data[treename][term_id]
     obsolete = data["obsolete"]
@@ -1297,8 +1251,8 @@ def term2tree(data, treename, term_id, entity_type, href="?id={curie}", max_chil
     return hierarchies
 
 
-def tree_label(data, treename, s):
-    """Retrieve the label of a term."""
+def tree_label(data: dict, treename: str, s: str) -> list:
+    """Retrieve the hiccup-style vector label of a term."""
     node = data[treename][s]
     label = node.get("label", s)
     if s in data["obsolete"]:
@@ -1306,12 +1260,12 @@ def tree_label(data, treename, s):
     return label
 
 
-def row2o(_stanza, _data, _uber_row):
+def row2o(_stanza: list, _data: dict, _uber_row: dict) -> list:
     """Given a stanza, a map (`_data`) with entries for the tree structure of the stanza and for all
     of the labels in it, and a row in the stanza, convert the object or value of the row to
     hiccup-style HTML."""
 
-    def renderNonBlank(given_row):
+    def renderNonBlank(given_row: dict) -> list:
         """Renders the non-blank object from the given row"""
         return [
             "a",
@@ -1319,13 +1273,13 @@ def row2o(_stanza, _data, _uber_row):
             _data["labels"].get(given_row["object"], given_row["object"]),
         ]
 
-    def renderLiteral(given_row):
+    def renderLiteral(given_row: dict) -> list:
         """Renders the object contained in the given row as a literal IRI"""
         # Literal IRIs are enclosed in angle brackets.
         iri = given_row["object"][1:-1]
         return ["a", {"rel": given_row["predicate"], "href": iri}, iri]
 
-    def getOwlOperands(given_row):
+    def getOwlOperands(given_row: dict) -> list:
         """Extract all of the operands pointed to by the given row and return them as a list"""
         LOGGER.debug("Finding operands for row with predicate: {}".format(given_row["predicate"]))
 
@@ -1373,10 +1327,10 @@ def row2o(_stanza, _data, _uber_row):
 
         return operands
 
-    def renderNaryRelation(class_pred, operands):
+    def renderNaryRelation(class_pred: str, operands: list) -> list:
         """Render an n-ary relation using the given predicate and operands"""
 
-        def relate_ops(oplist, operator):
+        def relate_ops(oplist: list, operator: str) -> list:
             """
             Relate the logical operands in 'oplist' using the given operator word. E.g., if oplist
             contains the logical operands: op1, op2, op3, and the operator is 'and', then an 'and'
@@ -1448,7 +1402,7 @@ def row2o(_stanza, _data, _uber_row):
         owl_div.append(")")
         return owl_div
 
-    def renderUnaryRelation(class_pred, operands):
+    def renderUnaryRelation(class_pred: str, operands: list) -> list:
         """Render a unary relation using the given predicate and operands"""
         if len(operands) != 1:
             LOGGER.error(
@@ -1468,7 +1422,7 @@ def row2o(_stanza, _data, _uber_row):
         owl_div = ["span", {"rel": class_pred}, operator, " ", operand]
         return owl_div
 
-    def renderOwlRestriction(given_rows):
+    def renderOwlRestriction(given_rows: list) -> list:
         """Renders the OWL restriction described by the given rows"""
         # OWL restrictions are represented using three rows. The first will have the predicate
         # 'rdf:type' and its object should always be 'owl:Restriction'. The second row will have the
@@ -1529,7 +1483,7 @@ def row2o(_stanza, _data, _uber_row):
             target_link,
         ]
 
-    def renderOwlClassExpression(given_rows, rel=None):
+    def renderOwlClassExpression(given_rows: list, rel: str = None) -> list:
         """Render the OWL class expression pointed to by the given row"""
         # The sub-stanza corresponding to an owl:Class should have two rows. One of these points
         # to the actual class referred to (either a named class or a blank node). From this row we

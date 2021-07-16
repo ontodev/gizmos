@@ -1,49 +1,53 @@
 import logging
-import psycopg2
+import os
 import re
-import sqlite3
 
 from configparser import ConfigParser
 from rdflib import Graph
+from sqlalchemy import create_engine
+from sqlalchemy.engine.base import Connection
+from typing import Union
 
 
-def add_labels(cur):
+def add_labels(conn: Connection):
     """Create a temporary labels table. If a term does not have a label, the label is the ID."""
     # Create a tmp labels table
-    cur.execute("CREATE TABLE tmp_labels(term TEXT PRIMARY KEY, label TEXT)")
-    if isinstance(cur, sqlite3.Cursor):
-        # Add all terms with label
-        cur.execute(
-            """INSERT OR IGNORE INTO tmp_labels SELECT subject, value
-               FROM statements WHERE predicate = 'rdfs:label'"""
-        )
-        # Update remaining with their ID as their label
-        cur.execute(
-            "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT subject, subject FROM statements"
-        )
-        cur.execute(
-            "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT predicate, predicate FROM statements"
-        )
-    else:
-        # Do the same for a psycopg2 Cursor
-        cur.execute(
-            """INSERT INTO tmp_labels
-               SELECT subject, value FROM statements WHERE predicate = 'rdfs:label'
-               ON CONFLICT (term) DO NOTHING"""
-        )
-        cur.execute(
-            """INSERT INTO tmp_labels
-               SELECT DISTINCT subject, subject FROM statements
-               ON CONFLICT (term) DO NOTHING"""
-        )
-        cur.execute(
-            """INSERT INTO tmp_labels
-               SELECT DISTINCT predicate, predicate FROM statements
-               ON CONFLICT (term) DO NOTHING"""
-        )
+    with conn.begin():
+        conn.execute("CREATE TABLE tmp_labels(term TEXT PRIMARY KEY, label TEXT)")
+        if str(conn.engine.url).startswith("sqlite"):
+            # Add all terms with label
+            conn.execute(
+                """INSERT OR IGNORE INTO tmp_labels SELECT subject, value
+                   FROM statements WHERE predicate = 'rdfs:label'"""
+            )
+            # Update remaining with their ID as their label
+            conn.execute(
+                "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT subject, subject FROM statements"
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO tmp_labels
+                   SELECT DISTINCT predicate, predicate FROM statements"""
+            )
+        else:
+            # Do the same for a psycopg2 Cursor
+            conn.execute(
+                """INSERT INTO tmp_labels
+                   SELECT subject, value FROM statements WHERE predicate = 'rdfs:label'
+                   ON CONFLICT (term) DO NOTHING"""
+            )
+            conn.execute(
+                """INSERT INTO tmp_labels
+                   SELECT DISTINCT subject, subject FROM statements
+                   ON CONFLICT (term) DO NOTHING"""
+            )
+            conn.execute(
+                """INSERT INTO tmp_labels
+                   SELECT DISTINCT predicate, predicate FROM statements
+                   ON CONFLICT (term) DO NOTHING"""
+            )
 
 
-def escape(curie):
+def escape(curie) -> str:
     """Escape illegal characters in the local ID portion of a CURIE"""
     prefix = curie.split(":")[0]
     local_id = curie.split(":")[1]
@@ -51,164 +55,76 @@ def escape(curie):
     return f"{prefix}:{local_id_fixed}"
 
 
-def escape_qnames(cur, table):
+def escape_qnames(conn: Connection, table: str):
     """Update CURIEs with illegal QName characters in the local ID by escaping those characters."""
     for keyword in ["stanza", "subject", "predicate", "object"]:
-        cur.execute(
+        results = conn.execute(
             f"""SELECT DISTINCT {keyword} FROM {table}
-                WHERE {keyword} NOT LIKE '<%>' AND {keyword} NOT LIKE '_:%'"""
+                WHERE {keyword} NOT LIKE '<%%>' AND {keyword} NOT LIKE '_:%%'"""
         )
-        for row in cur.fetchall():
-            curie = row[0]
+        for res in results:
+            curie = res[keyword]
             escaped = escape(curie)
             if curie != escaped:
-                cur.execute(
+                conn.execute(
                     f"UPDATE {table} SET {keyword} = '{escaped}' WHERE {keyword} = '{curie}'"
                 )
 
 
-def get_ancestors_capped(cur, top_terms, ancestors, term_id):
-    """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
-    or a top-level term is reached (below owl:Thing).
-
-    :param cur: database Cursor object to query
-    :param top_terms: set of top terms to stop at
-    :param ancestors: set to collect ancestors in
-    :param term_id: term ID to get the ancestors of"""
-    cur.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object NOT LIKE '_:%'"""
-    )
-    res = cur.fetchall()
-    if not res:
-        # No parents, we've hit the very top-level
-        ancestors.add(term_id)
-        return
-    for r in res:
-        parent = r[0]
-        if parent == "owl:Thing" or (top_terms and r[0] in top_terms):
-            continue
-        ancestors.add(r[0])
-        get_ancestors_capped(cur, top_terms, ancestors, parent)
-
-
-def get_ancestors(cur, term_id):
-    """Return a set of ancestors for a given term ID, all the way to the top-level (below owl:Thing)
-
-    :param cur: database Cursor object to query
-    :param term_id: term ID to get the ancestors of"""
-    cur.execute(
-        f"""WITH RECURSIVE ancestors(node) AS (
-                VALUES ('{term_id}')
-                UNION
-                 SELECT object AS node
-                FROM statements
-                WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                  AND object = '{term_id}'
-                UNION
-                SELECT object AS node
-                FROM statements, ancestors
-                WHERE ancestors.node = statements.stanza
-                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                  AND statements.object NOT LIKE '_:%'
-            )
-            SELECT * FROM ancestors""",
-    )
-    return set([x[0] for x in cur.fetchall()])
-
-
-def get_bottom_descendants(cur, term_id, descendants):
-    """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
-    terms are those that are not ever used as the object of an rdfs:subClassOf statement.
-
-    :param cur: database Cursor object to query
-    :param term_id: term ID to get the bottom descendants of
-    :param descendants: a set to add descendants to
-    """
-    cur.execute(
-        f"""SELECT DISTINCT stanza FROM statements
-            WHERE object = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
-    )
-    res = cur.fetchall()
-    if not res:
-        # No children - this is a bottom-level term
-        descendants.add(term_id)
-        return
-    for r in res:
-        get_bottom_descendants(cur, r[0], descendants)
-
-
-def get_children(cur, term_id):
-    """Return a set of children for a given term ID."""
-    cur.execute(
-        f"""SELECT DISTINCT stanza FROM statements
-            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object = '{term_id}'""",
-    )
-    return set([x[0] for x in cur.fetchall()])
-
-
-def get_connection(file):
-    """Given a file ending in .db or .ini, create a database connection."""
-    if file.endswith(".db"):
-        # Always SQLite
-        logging.info("Initializing SQLite connection")
-        return sqlite3.connect(file)
-    elif file.endswith(".ini"):
-        # Always PostgreSQL (for now)
+def get_connection(path: str) -> Union[Connection, None]:
+    """"""
+    if path.endswith(".db"):
+        abspath = os.path.abspath(path)
+        db_url = "sqlite:///" + abspath
+        engine = create_engine(db_url)
+        return engine.connect()
+    elif path.endswith(".ini"):
         config_parser = ConfigParser()
-        config_parser.read(file)
+        config_parser.read(path)
         if config_parser.has_section("postgresql"):
             params = {}
             for param in config_parser.items("postgresql"):
                 params[param[0]] = param[1]
         else:
             logging.error(
-                "Unable to create database connection; missing [postgresql] section from " + file
+                "Unable to create database connection; missing [postgresql] section from " + path
             )
             return None
-        logging.info("Initializing PostgreSQL connection")
-        return psycopg2.connect(**params)
+        pg_user = params.get("user")
+        if not pg_user:
+            logging.error("Unable to create database connection: missing 'user' parameter from " + path)
+            return None
+        pg_pw = params.get("password")
+        if not pg_pw:
+            logging.error(
+                "Unable to create database connection: missing 'password' parameter from " + path)
+            return None
+        pg_db = params.get("database")
+        if not pg_db:
+            logging.error(
+                "Unable to create database connection: missing 'database' parameter from " + path)
+            return None
+        pg_host = params.get("host", "127.0.0.1")
+        pg_port = params.get("port", "5432")
+        db_url = f"postgresql+psycopg2://{pg_user}:{pg_pw}@{pg_host}:{pg_port}/{pg_db}"
+        engine = create_engine(db_url)
+        return engine.connect()
     logging.error(
         "Either a database file or a config file must be specified with a .db or .ini extension"
     )
     return None
 
 
-def get_descendants(cur, term_id):
-    """Return a set of descendants for a given term ID."""
-    cur.execute(
-        f"""WITH RECURSIVE descendants(node) AS (
-                VALUES ('{term_id}')
-                UNION
-                 SELECT stanza AS node
-                FROM statements
-                WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                  AND stanza = '{term_id}'
-                UNION
-                SELECT stanza AS node
-                FROM statements, descendants
-                WHERE descendants.node = statements.object
-                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-            )
-            SELECT * FROM descendants""",
-    )
-    return set([x[0] for x in cur.fetchall()])
-
-
-def get_ids(cur, id_or_labels):
+def get_ids(conn: Connection, id_or_labels: list) -> list:
     """Create a list of IDs from a list of IDs or labels."""
     ids = []
     for id_or_label in id_or_labels:
-        cur.execute(f"SELECT term FROM tmp_labels WHERE label = '{id_or_label}'")
-        res = cur.fetchone()
+        res = conn.execute(f"SELECT term FROM tmp_labels WHERE label = '{id_or_label}'").fetchone()
         if res:
-            ids.append(res[0])
+            ids.append(res["term"])
         else:
             # Make sure this exists as an ID
-            cur.execute(f"SELECT label FROM tmp_labels WHERE term = '{id_or_label}'")
-            res = cur.fetchone()
+            res = conn.execute(f"SELECT label FROM tmp_labels WHERE term = '{id_or_label}'").fetchone()
             if res:
                 ids.append(id_or_label)
             else:
@@ -216,17 +132,7 @@ def get_ids(cur, id_or_labels):
     return ids
 
 
-def get_parents(cur, term_id):
-    """Return a set of parents for a given term ID."""
-    cur.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-            AND object NOT LIKE '_:%'"""
-    )
-    return set([x[0] for x in cur.fetchall()])
-
-
-def get_terms(term_list, terms_file):
+def get_terms(term_list: list, terms_file: str) -> list:
     """Get a list of terms from a list and/or a file from args."""
     terms = term_list or []
     if terms_file:
@@ -244,40 +150,10 @@ def get_terms(term_list, terms_file):
     return terms
 
 
-def get_top_ancestors(cur, ancestors, term_id, top_terms=None):
-    """Get the top-level ancestor or ancestors for a given term with no intermediates. The top-level
-    terms are those with no rdfs:subClassOf statement, or direct children of owl:Thing. If top_terms
-    is included, they may also be those terms in that list.
-
-    :param cur: database Cursor object to query
-    :param ancestors: a set to add ancestors to
-    :param term_id: term ID to get the top ancestor of
-    :param top_terms: a list of top-level terms to stop at
-                      (if an ancestor is in this set, it will be added and recursion will stop)
-    """
-    cur.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object NOT LIKE '_:%'"""
-    )
-    res = cur.fetchall()
-    if not res:
-        ancestors.add(term_id)
-        return
-    for r in res:
-        if r[0] == "owl:Thing":
-            ancestors.add(term_id)
-            break
-        if top_terms and r[0] in top_terms:
-            ancestors.add(r[0])
-        else:
-            get_top_ancestors(cur, ancestors, r[0], top_terms=top_terms)
-
-
-def get_ttl(cur, table):
+def get_ttl(conn: Connection, table: str) -> str:
     """Get the given table as lines of Turtle (the lines are returned as a list)."""
     # Get ttl lines
-    cur.execute(
+    results = conn.execute(
         f"""WITH literal(value, escaped) AS (
               SELECT DISTINCT
                 value,
@@ -286,7 +162,7 @@ def get_ttl(cur, table):
               FROM {table}
             )
             SELECT
-              '@prefix ' || prefix || ': <' || base || '> .'
+              '@prefix ' || prefix || ': <' || base || '> .' AS line
             FROM prefix
             UNION ALL
             SELECT DISTINCT
@@ -304,8 +180,8 @@ def get_ttl(cur, table):
             FROM {table} LEFT JOIN literal ON {table}.value = literal.value;"""
     )
     lines = []
-    for row in cur.fetchall():
-        line = row[0]
+    for res in results:
+        line = res["line"]
         if not line:
             continue
         # Replace newlines
@@ -315,14 +191,14 @@ def get_ttl(cur, table):
     return "\n".join(lines)
 
 
-def ttl_to_json(cur, ttl):
+def ttl_to_json(conn: Connection, ttl: str) -> str:
     # Create a Graph object from the TTL string
     graph = Graph()
     graph.parse(data=ttl, format="turtle")
 
     # Create the context with prefixes
-    cur.execute("SELECT DISTINCT prefix, base FROM prefix;")
+    results = conn.execute("SELECT DISTINCT prefix, base FROM prefix;")
     context = {}
-    for row in cur.fetchall():
-        context[row[0]] = {"@id": row[1], "@type": "@id"}
+    for res in results:
+        context[res["prefix"]] = {"@id": res["base"], "@type": "@id"}
     return graph.serialize(format="json-ld", context=context, indent=4).decode("utf-8")

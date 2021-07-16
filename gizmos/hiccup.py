@@ -1,4 +1,4 @@
-def render(prefixes, element, href="?id={curie}", db=None, depth=0):
+def render(prefixes: list, element: list, href: str = "?id={curie}", db: str = None, depth: int = 0) -> str:
     """Render hiccup-style HTML vector as HTML."""
     render_element = element.copy()
     indent = "  " * depth
@@ -40,7 +40,7 @@ def render(prefixes, element, href="?id={curie}", db=None, depth=0):
     return output
 
 
-def render_text(element):
+def render_text(element: list) -> str:
     """Render hiccup-style HTML vector as text."""
     if not isinstance(element, list):
         raise Exception(f"Element is not a list: {element}")

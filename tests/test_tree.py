@@ -1,18 +1,18 @@
 import gizmos.tree
 import html5lib
-import psycopg2
 import sqlite3
 
 from pyRdfa.parse import parse_one_node
 from pyRdfa.state import ExecutionContext
 from pyRdfa.options import Options
 from rdflib import Graph
-from util import test_conn, test_db, create_postgresql_db, create_sqlite_db, compare_graphs
+from sqlalchemy import create_engine
+from sqlalchemy.engine.base import Connection
+from util import compare_graphs, create_postgresql_db, create_sqlite_db, postgres_url, sqlite_url
 
 
-def check_term(conn, term, predicates):
-    cur = conn.cursor()
-    html = gizmos.tree.build_tree(cur, "obi", term, predicate_ids=predicates)
+def check_term(conn: Connection, term: str, predicates: list):
+    html = gizmos.tree.tree(conn, "obi", term, predicate_ids=predicates)
 
     # Create the DOM document element
     parser = html5lib.HTMLParser(tree=html5lib.treebuilders.getTreeBuilder("dom"))
@@ -58,16 +58,18 @@ def tree(conn):
     check_term(
         conn,
         "OBI:0000793",
-        ["rdfs:label", "IAO:0000115", "rdfs:subClassOf", "owl:equivalentClass", "rdf:type"]
+        ["rdfs:label", "IAO:0000115", "rdfs:subClassOf", "owl:equivalentClass", "rdf:type"],
     )
     check_term(conn, "OBI:0100046", [])
 
 
 def test_tree_postgresql(create_postgresql_db):
-    with psycopg2.connect(**test_conn) as conn:
+    engine = create_engine(postgres_url)
+    with engine.connect() as conn:
         tree(conn)
 
 
 def test_tree_sqlite(create_sqlite_db):
-    with sqlite3.connect(test_db) as conn:
+    engine = create_engine(sqlite_url)
+    with engine.connect() as conn:
         tree(conn)
