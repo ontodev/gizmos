@@ -35,7 +35,7 @@ After loading the OWL into the database, we highly recommend creating an index o
 sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
 ```
 
-When using `gizmos` as a Python module, all operations accept a database connection object. For details on the Connection, see [Python Database API Connection Objects](https://www.python.org/dev/peps/pep-0249/#connection-objects). We support [sqlite3](https://docs.python.org/3/library/sqlite3.html) and [psycopg2](https://pypi.org/project/psycopg2/) (PostgreSQL). Using other connection objects may result in unanticipated errors due to slight variations in syntax.
+When using `gizmos` as a Python module, all operations accept a `sqlalchemy` Connection object. For details on the Connection, see [Working with Engines and Connections](https://docs.sqlalchemy.org/en/14/core/connections.html). We currently support SQLite and PostgreSQL. Using other connections may result in unanticipated errors due to slight variations in syntax. Note that if you use a PostgreSQL database, you must install or include `psycopg2` in your requirements.
 
 ## Modules
 
