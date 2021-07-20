@@ -1579,7 +1579,7 @@ def row2o(_stanza, _data, _uber_row):
     uber_obj = _uber_row["object"]
     LOGGER.debug(f"Called row2o on <s,p,o> = <{uber_subj}, {uber_pred}, {uber_obj}>")
 
-    if not isinstance(uber_obj, str) or uber_obj == "":
+    if not isinstance(uber_obj, str):
         if _uber_row["value"]:
             LOGGER.debug("Rendering non-string object with value: {}".format(_uber_row["value"]))
             return ["span", {"property": uber_pred}, _uber_row["value"]]
