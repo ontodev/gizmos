@@ -167,12 +167,21 @@ def check_statements(cur, limit=10):
     if not has_stanza_idx:
         logger.warning("missing index on 'stanza' column")
 
+    # Check that no row has both an object and a value
+    message_count = 0
+    cur.execute("SELECT * FROM statements WHERE object IS NOT NULL AND value IS NOT NULL")
+    invalid = len(cur.fetchall())
+    if invalid:
+        logger.error(
+            f"{invalid} rows where both 'object' and 'value' have values (one must be NULL)"
+        )
+        message_count += 1
+
     # Get prefixes to check against
     cur.execute("SELECT prefix, base FROM prefix")
     prefixes = {x[0]: x[1] for x in cur.fetchall()}
 
     # Check subjects, stanzas, predicates, and objects
-    message_count = 0
     for col in ["stanza", "subject", "predicate", "object"]:
         if limit and message_count >= limit:
             # Do not exceed the limit of messages
