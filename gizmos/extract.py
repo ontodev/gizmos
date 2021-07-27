@@ -244,15 +244,11 @@ def extract(
         # Current predicates are IDs or labels - make sure we get all the IDs
         predicate_ids = get_ids(conn, predicates)
 
-    logging.error("4")
-
     # Create the terms table containing parent -> child relationships
     conn.execute("CREATE TABLE tmp_terms(child TEXT, parent TEXT)")
     for term_id in terms.keys():
         query = sql_text("INSERT INTO tmp_terms VALUES (:term_id, NULL)")
         conn.execute(query, term_id=term_id)
-
-    logging.error("5")
 
     # Create tmp predicates table containing all predicates to include
     conn.execute("CREATE TABLE tmp_predicates(predicate TEXT PRIMARY KEY NOT NULL)")
