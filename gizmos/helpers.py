@@ -6,6 +6,7 @@ from configparser import ConfigParser
 from rdflib import Graph
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import text as sql_text
 from typing import Union
 
 
@@ -66,9 +67,10 @@ def escape_qnames(conn: Connection, table: str):
             curie = res[keyword]
             escaped = escape(curie)
             if curie != escaped:
-                conn.execute(
-                    f"UPDATE {table} SET {keyword} = '{escaped}' WHERE {keyword} = '{curie}'"
+                query = sql_text(
+                    f"UPDATE {table} SET {keyword} = :escaped WHERE {keyword} = :curie"
                 )
+                conn.execute(query, escaped=escaped, curie=curie)
 
 
 def get_connection(path: str) -> Union[Connection, None]:
@@ -92,17 +94,21 @@ def get_connection(path: str) -> Union[Connection, None]:
             return None
         pg_user = params.get("user")
         if not pg_user:
-            logging.error("Unable to create database connection: missing 'user' parameter from " + path)
+            logging.error(
+                "Unable to create database connection: missing 'user' parameter from " + path
+            )
             return None
         pg_pw = params.get("password")
         if not pg_pw:
             logging.error(
-                "Unable to create database connection: missing 'password' parameter from " + path)
+                "Unable to create database connection: missing 'password' parameter from " + path
+            )
             return None
         pg_db = params.get("database")
         if not pg_db:
             logging.error(
-                "Unable to create database connection: missing 'database' parameter from " + path)
+                "Unable to create database connection: missing 'database' parameter from " + path
+            )
             return None
         pg_host = params.get("host", "127.0.0.1")
         pg_port = params.get("port", "5432")
@@ -119,12 +125,14 @@ def get_ids(conn: Connection, id_or_labels: list) -> list:
     """Create a list of IDs from a list of IDs or labels."""
     ids = []
     for id_or_label in id_or_labels:
-        res = conn.execute(f"SELECT term FROM tmp_labels WHERE label = '{id_or_label}'").fetchone()
+        query = sql_text("SELECT term FROM tmp_labels WHERE label = :id_or_label")
+        res = conn.execute(query, id_or_label=id_or_label).fetchone()
         if res:
             ids.append(res["term"])
         else:
             # Make sure this exists as an ID
-            res = conn.execute(f"SELECT label FROM tmp_labels WHERE term = '{id_or_label}'").fetchone()
+            query = sql_text("SELECT label FROM tmp_labels WHERE term = :id_or_label")
+            res = conn.execute(query, id_or_label=id_or_label).fetchone()
             if res:
                 ids.append(id_or_label)
             else:

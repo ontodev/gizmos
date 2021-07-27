@@ -4,6 +4,7 @@ import sys
 from argparse import ArgumentParser
 from collections import defaultdict
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import text as sql_text
 from .helpers import get_connection
 
 
@@ -69,12 +70,11 @@ def get_search_results(
     names = defaultdict(dict)
     if text:
         # Get labels
-        results = conn.execute(
-            f"""SELECT DISTINCT subject, value
-                FROM statements
-                WHERE predicate = '{label}'
-                AND value LIKE '%%{text}%%';"""
+        query = sql_text(
+            """SELECT DISTINCT subject, value FROM statements
+            WHERE predicate = :label AND value LIKE :text"""
         )
+        results = conn.execute(query, label=label, text=f"%%{text}%%")
         for res in results:
             term_id = res["subject"]
             if term_id not in names:
@@ -84,9 +84,8 @@ def get_search_results(
         # Get short labels
         if short_label:
             if short_label.lower() == "id":
-                results = conn.execute(
-                    f"SELECT DISTINCT stanza FROM statements WHERE stanza LIKE '%%{text}%%';"
-                )
+                query = sql_text("SELECT DISTINCT stanza FROM statements WHERE stanza LIKE :text")
+                results = conn.execute(query, text=f"%%{text}%%")
                 for res in results:
                     term_id = res["stanza"]
                     if term_id not in names:
@@ -95,12 +94,11 @@ def get_search_results(
                         term_id = term_id[1:-1]
                     names[term_id]["short_label"] = term_id
             else:
-                results = conn.execute(
-                    f"""SELECT DISTINCT subject, value
-                        FROM statements
-                        WHERE predicate = '{short_label}'
-                        AND value LIKE '%%{text}%%';"""
+                query = sql_text(
+                    """SELECT DISTINCT subject, value FROM statements
+                    WHERE predicate = :short_label AND value LIKE :text"""
                 )
+                results = conn.execute(query, short_label=short_label, text=f"%%{text}%%")
                 for res in results:
                     term_id = res["subject"]
                     if term_id not in names:
@@ -110,12 +108,11 @@ def get_search_results(
         # Get synonyms
         if synonyms:
             for syn in synonyms:
-                results = conn.execute(
-                    f"""SELECT DISTINCT subject, value
-                        FROM statements
-                        WHERE predicate = '{syn}'
-                        AND value LIKE '%%{text}%%';"""
+                query = sql_text(
+                    """SELECT DISTINCT subject, value FROM statements
+                    WHERE predicate = :syn AND value LIKE :text"""
                 )
+                results = conn.execute(query, syn=syn, text=f"%%{text}%%")
                 for res in results:
                     term_id = res["subject"]
                     value = res["value"]
@@ -163,10 +160,11 @@ def get_search_results(
         # Add the other, missing property values
         if not term_label:
             # Label did not match text, retrieve it to display
-            res = conn.execute(
-                f"""SELECT DISTINCT value FROM statements
-                    WHERE predicate = '{label}' AND stanza = '{term_id}'""",
-            ).fetchone()
+            query = sql_text(
+                """SELECT DISTINCT value FROM statements
+                WHERE predicate = :label AND stanza = :term_id"""
+            )
+            res = conn.execute(query, label=label, term_id=term_id).fetchone()
             if res:
                 term_label = res["value"]
 
@@ -178,10 +176,11 @@ def get_search_results(
                 else:
                     term_short_label = term_id
             else:
-                res = conn.execute(
-                    f"""SELECT DISTINCT value FROM statements
-                        WHERE predicate = '{short_label}' AND stanza = '{term_id}'"""
-                ).fetchone()
+                query = sql_text(
+                    """SELECT DISTINCT value FROM statements
+                    WHERE predicate = :short_label AND stanza = :term_id"""
+                )
+                res = conn.execute(query, short_label=short_label, term_id=term_id).fetchone()
                 if res:
                     term_short_label = res["value"]
 

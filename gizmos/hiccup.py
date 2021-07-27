@@ -1,4 +1,6 @@
-def render(prefixes: list, element: list, href: str = "?id={curie}", db: str = None, depth: int = 0) -> str:
+def render(
+    prefixes: list, element: list, href: str = "?id={curie}", db: str = None, depth: int = 0
+) -> str:
     """Render hiccup-style HTML vector as HTML."""
     render_element = element.copy()
     indent = "  " * depth

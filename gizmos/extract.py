@@ -4,6 +4,7 @@ import sys
 
 from argparse import ArgumentParser, Namespace
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import text as sql_text
 from .helpers import (
     add_labels,
     escape_qnames,
@@ -175,26 +176,19 @@ def extract(
     if intermediates not in ["all", "none"]:
         raise Exception("Unknown 'intermediates' option: " + intermediates)
 
-    logging.error("1")
-
     # Pre-clean up
     clean(conn)
 
-    logging.error("2")
-
     # Create a temp labels table
     add_labels(conn)
-
-    logging.error("3")
 
     # First pass on terms, get all related entities
     ignore = []
     more_terms = set()
     for term_id, details in terms.items():
         # Confirm that this term exists
-        res = conn.execute(
-            f"SELECT * FROM statements WHERE stanza = '{term_id}' LIMIT 1"
-        ).fetchone()
+        query = sql_text("SELECT * FROM statements WHERE stanza = :term_id LIMIT 1")
+        res = conn.execute(query, term_id=term_id).fetchone()
         if not res:
             logging.warning(f"'{term_id}' does not exist in database")
             ignore.append(term_id)
@@ -255,7 +249,8 @@ def extract(
     # Create the terms table containing parent -> child relationships
     conn.execute("CREATE TABLE tmp_terms(child TEXT, parent TEXT)")
     for term_id in terms.keys():
-        conn.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', NULL)")
+        query = sql_text("INSERT INTO tmp_terms VALUES (:term_id, NULL)")
+        conn.execute(query, term_id=term_id)
 
     logging.error("5")
 
@@ -264,12 +259,14 @@ def extract(
     if predicate_ids:
         for predicate_id in predicate_ids:
             if str(conn.engine.url).startswith("sqlite"):
-                conn.execute(f"INSERT OR IGNORE INTO tmp_predicates VALUES ('{predicate_id}')")
+                query = sql_text("INSERT OR IGNORE INTO tmp_predicates VALUES (:predicate_id)")
+                conn.execute(query, predicate_id=predicate_id)
             else:
-                conn.execute(
-                    f"""INSERT INTO tmp_predicates VALUES ('{predicate_id}')
-                        ON CONFLICT (predicate) DO NOTHING"""
+                query = sql_text(
+                    """INSERT INTO tmp_predicates VALUES (:predicate_id)
+                    ON CONFLICT (predicate) DO NOTHING"""
                 )
+                conn.execute(query, predicate_id=predicate_id)
     else:
         # Insert all predicates
         if str(conn.engine.url).startswith("sqlite"):
@@ -294,7 +291,8 @@ def extract(
         override_parent = details.get("Parent ID")
         if override_parent:
             # Just assert this as parent and don't worry about existing parent(s)
-            conn.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{override_parent}')")
+            query = sql_text("INSERT INTO tmp_terms VALUES (:term_id, :override_parent)")
+            conn.execute(query, term_id=term_id, override_parent=override_parent)
             continue
         if no_hierarchy:
             continue
@@ -310,7 +308,8 @@ def extract(
             for p in parents:
                 if p == term_id:
                     continue
-                conn.execute(f"INSERT INTO tmp_terms VALUES ('{term_id}', '{p}')")
+                query = sql_text("INSERT INTO tmp_terms VALUES (:term_id, :p)")
+                conn.execute(query, term_id=term_id, p=p)
 
     # Create our extract table to hold the actual triples
     conn.execute(
@@ -397,10 +396,12 @@ def extract(
 
     # Finally, if imported_from IRI is included, add this to add terms
     if imported_from:
+        query = sql_text(
+            """INSERT INTO tmp_extract (stanza, subject, predicate, object)
+            SELECT DISTINCT child, child, :imported_from_property, :imported_from FROM tmp_terms"""
+        )
         conn.execute(
-            f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
-            SELECT DISTINCT child, child, '{imported_from_property}', '<{imported_from}>'
-            FROM tmp_terms"""
+            query, imported_from_property=imported_from_property, imported_from=f"<{imported_from}>"
         )
 
     # Escape QNames
@@ -422,10 +423,11 @@ def get_ancestors_capped(conn: Connection, top_terms: set, ancestors: set, term_
     :param top_terms: set of top terms to stop at
     :param ancestors: set to collect ancestors in
     :param term_id: term ID to get the ancestors of"""
-    results = conn.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object NOT LIKE '_:%%'""")
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+    )
+    results = conn.execute(query, term_id=term_id)
     ancestors.add(term_id)
     for res in results:
         o = res["object"]
@@ -443,10 +445,11 @@ def get_bottom_descendants(conn: Connection, descendants: set, term_id: str):
     :param descendants: a set to add descendants to
     :param term_id: term ID to get the bottom descendants of
     """
-    results = conn.execute(
-        f"""SELECT DISTINCT stanza FROM statements
-            WHERE object = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+    query = sql_text(
+        """SELECT DISTINCT stanza FROM statements
+    WHERE object = :term_id AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
     )
+    results = conn.execute(query, term_id=term_id)
     descendants.add(term_id)
     for res in results:
         get_bottom_descendants(conn, descendants, res["stanza"])
@@ -454,32 +457,33 @@ def get_bottom_descendants(conn: Connection, descendants: set, term_id: str):
 
 def get_children(conn: Connection, term_id: str) -> set:
     """Return a set of children for a given term ID."""
-    results = conn.execute(
-        f"""SELECT DISTINCT stanza FROM statements
-            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object = '{term_id}'""",
+    query = sql_text(
+        """SELECT DISTINCT stanza FROM statements
+        WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object = :term_id"""
     )
+    results = conn.execute(query, term_id=term_id)
     return set([x["stanza"] for x in results])
 
 
 def get_descendants(conn: Connection, term_id: str) -> set:
     """Return a set of descendants for a given term ID."""
-    results = conn.execute(
-        f"""WITH RECURSIVE descendants(node) AS (
-                VALUES ('{term_id}')
-                UNION
-                 SELECT stanza AS node
-                FROM statements
-                WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-                  AND stanza = '{term_id}'
-                UNION
-                SELECT stanza AS node
-                FROM statements, descendants
-                WHERE descendants.node = statements.object
-                  AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-            )
-            SELECT * FROM descendants""",
+    query = sql_text(
+        """WITH RECURSIVE descendants(node) AS (
+            VALUES (:term_id)
+            UNION
+             SELECT stanza AS node
+            FROM statements
+            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND stanza = :term_id
+            UNION
+            SELECT stanza AS node
+            FROM statements, descendants
+            WHERE descendants.node = statements.object
+              AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+        )
+        SELECT * FROM descendants"""
     )
+    results = conn.execute(query, term_id=term_id)
     return set([x[0] for x in results])
 
 
@@ -509,11 +513,11 @@ def get_import_terms(import_file: str, source: str = None) -> dict:
 
 def get_parents(conn: Connection, term_id: str) -> set:
     """Return a set of parents for a given term ID."""
-    results = conn.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-            AND object NOT LIKE '_:%%'"""
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
     )
+    results = conn.execute(query, term_id=term_id)
     return set([x["object"] for x in results])
 
 
@@ -528,11 +532,11 @@ def get_top_ancestors(conn: Connection, ancestors: set, term_id: str, top_terms:
     :param top_terms: a list of top-level terms to stop at
                       (if an ancestor is in this set, it will be added and recursion will stop)
     """
-    results = conn.execute(
-        f"""SELECT DISTINCT object FROM statements
-            WHERE stanza = '{term_id}' AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND object NOT LIKE '_:%%'"""
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
     )
+    results = conn.execute(query, term_id=term_id)
     ancestors.add(term_id)
     for res in results:
         o = res["object"]

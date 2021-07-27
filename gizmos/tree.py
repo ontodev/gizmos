@@ -8,6 +8,8 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from gizmos.hiccup import render
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import bindparam
+from sqlalchemy.sql.expression import text as sql_text
 from .helpers import get_connection
 
 """
@@ -143,9 +145,7 @@ def tree(
     ps = set()
     body = []
     if not term_id:
-        p, t = term2rdfa(
-            conn, all_prefixes, treename, [], "owl:Class", [], title=title, href=href
-        )
+        p, t = term2rdfa(conn, all_prefixes, treename, [], "owl:Class", [], title=title, href=href)
         ps.update(p)
         body.append(t)
 
@@ -179,10 +179,11 @@ def tree(
         elif not predicate_ids:
             predicate_ids = get_sorted_predicates(conn)
 
-        results = conn.execute(
-            f"""SELECT stanza, subject, predicate, object, value, datatype, language
-                    FROM statements WHERE stanza = '{term_id}'"""
+        query = sql_text(
+            """SELECT stanza, subject, predicate, object, value, datatype, language
+            FROM statements WHERE stanza = :term_id"""
         )
+        results = conn.execute(query, term_id=term_id)
         stanza = []
         for res in results:
             stanza.append(dict(res))
@@ -266,7 +267,7 @@ def tree(
             # Add tree name to query params
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
-                """
+            """
     $('#search-form').submit(function () {
         $(this)
             .find('input[name]')
@@ -295,8 +296,8 @@ def tree(
         },
         remote: {
           url: """
-                + remote
-                + """,
+            + remote
+            + """,
           wildcard: '%QUERY',
           transform : function(response) {
               return bloodhound.sorter(response);
@@ -352,8 +353,8 @@ def tree(
       for (var p in obj)
         if (obj.hasOwnProperty(p)) {
           """
-                + js_funct
-                + """
+            + js_funct
+            + """
         }
       return str.join("&");
     }"""
@@ -493,7 +494,14 @@ def tree(
     return render(all_prefixes, html, href=href, db=treename)
 
 
-def annotations2rdfa(treename: str, data: dict, predicate_ids: list, term_id: str, stanza: list, href: str = "?term={curie}") -> list:
+def annotations2rdfa(
+    treename: str,
+    data: dict,
+    predicate_ids: list,
+    term_id: str,
+    stanza: list,
+    href: str = "?term={curie}",
+) -> list:
     """Create a hiccup-style vector for the annotation on a term."""
     # The subjects in the stanza that are of type owl:Axiom:
     annotation_bnodes = set()
@@ -622,7 +630,16 @@ def annotations2rdfa(treename: str, data: dict, predicate_ids: list, term_id: st
     return items
 
 
-def build_nested(treename: str, data: dict, labels: dict, spv2annotation: dict, source: str, row: dict, ele: list, href: str = "?id={curie}") -> list:
+def build_nested(
+    treename: str,
+    data: dict,
+    labels: dict,
+    spv2annotation: dict,
+    source: str,
+    row: dict,
+    ele: list,
+    href: str = "?id={curie}",
+) -> list:
     """Build a nested hiccup list of axiom annotations."""
     predicate = row["predicate"]
     if source in spv2annotation:
@@ -664,7 +681,14 @@ def build_nested(treename: str, data: dict, labels: dict, spv2annotation: dict, 
     return ele
 
 
-def thing2rdfa(conn: Connection, all_prefixes: list, treename: str, predicate_ids: list, title: str = None, href: str = "?id={curie}"):
+def thing2rdfa(
+    conn: Connection,
+    all_prefixes: list,
+    treename: str,
+    predicate_ids: list,
+    title: str = None,
+    href: str = "?id={curie}",
+):
     """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
     # Select all classes without parents and set them as children of owl:Thing
     results = conn.execute(
@@ -697,7 +721,17 @@ def thing2rdfa(conn: Connection, all_prefixes: list, treename: str, predicate_id
                 "language": None,
             }
         ]
-    return term2rdfa(conn, all_prefixes, treename, predicate_ids, "owl:Thing", stanza, title=title, add_children=add_children, href=href)
+    return term2rdfa(
+        conn,
+        all_prefixes,
+        treename,
+        predicate_ids,
+        "owl:Thing",
+        stanza,
+        title=title,
+        add_children=add_children,
+        href=href,
+    )
 
 
 def curie2iri(prefixes: list, curie: str) -> str:
@@ -712,10 +746,11 @@ def curie2iri(prefixes: list, curie: str) -> str:
 
 def get_entity_type(conn: Connection, term_id: str) -> str:
     """Get the OWL entity type for a term."""
-    results = list(conn.execute(
-        f"""SELECT object FROM statements
-            WHERE stanza = '{term_id}' AND subject = '{term_id}' AND predicate = 'rdf:type'"""
-    ))
+    query = sql_text(
+        """SELECT object FROM statements WHERE stanza = :term_id
+        AND subject = :term_id AND predicate = 'rdf:type'"""
+    )
+    results = list(conn.execute(query, term_id=term_id))
     if len(results) > 1:
         for res in results:
             if res["object"] in TOP_LEVELS:
@@ -728,16 +763,18 @@ def get_entity_type(conn: Connection, term_id: str) -> str:
         return entity_type
     else:
         entity_type = None
-        results = conn.execute(
-            f"SELECT predicate FROM statements WHERE stanza = '{term_id}' AND subject = '{term_id}'"
+        query = sql_text(
+            "SELECT predicate FROM statements WHERE stanza = :term_id AND subject = :term_id"
         )
+        results = conn.execute(query, term_id=term_id)
         preds = [row["predicate"] for row in results]
         if "rdfs:subClassOf" in preds:
             return "owl:Class"
         elif "rdfs:subPropertyOf" in preds:
             return "owl:AnnotationProperty"
         if not entity_type:
-            results = conn.execute(f"SELECT predicate FROM statements WHERE object = '{term_id}'")
+            query = sql_text("SELECT predicate FROM statements WHERE object = :term_id")
+            results = conn.execute(query, term_id=term_id)
             preds = [row["predicate"] for row in results]
             if "rdfs:subClassOf" in preds:
                 return "owl:Class"
@@ -746,48 +783,52 @@ def get_entity_type(conn: Connection, term_id: str) -> str:
     return "owl:Class"
 
 
-def get_hierarchy(conn: Connection, term_id: str, entity_type: str, add_children: list = None) -> (dict, set):
+def get_hierarchy(
+    conn: Connection, term_id: str, entity_type: str, add_children: list = None
+) -> (dict, set):
     """Return a hierarchy dictionary for a term and all its ancestors and descendants."""
     # Build the hierarchy
     if entity_type == "owl:Individual":
-        results = conn.execute(
-            f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
-                WHERE stanza = '{term_id}'
-                 AND subject = '{term_id}'
-                 AND predicate = 'rdf:type'
-                 AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
-                 AND object NOT LIKE '_:%%'"""
+        query = sql_text(
+            """SELECT DISTINCT object AS parent, subject AS child FROM statements
+            WHERE stanza = :term_id
+             AND subject = :term_id
+             AND predicate = 'rdf:type'
+             AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
+             AND object NOT LIKE '_:%%'"""
         )
+        results = conn.execute(query, term_id=term_id)
     else:
         pred = "rdfs:subPropertyOf"
         if entity_type == "owl:Class":
             pred = "rdfs:subClassOf"
-        results = conn.execute(
-            f"""WITH RECURSIVE ancestors(parent, child) AS (
-                VALUES ('{term_id}', NULL)
-                UNION
-                -- The children of the given term:
-                SELECT object AS parent, subject AS child
-                FROM statements
-                WHERE predicate = '{pred}'
-                  AND object = '{term_id}'
-                UNION
-                --- Children of the children of the given term
-                SELECT object AS parent, subject AS child
-                FROM statements
-                WHERE object IN (SELECT subject FROM statements
-                                 WHERE predicate = '{pred}' AND object = '{term_id}')
-                  AND predicate = '{pred}'
-                UNION
-                -- The non-blank parents of all of the parent terms extracted so far:
-                SELECT object AS parent, subject AS child
-                FROM statements, ancestors
-                WHERE ancestors.parent = statements.stanza
-                  AND statements.predicate = '{pred}'
-                  AND statements.object NOT LIKE '_:%%'
-              )
-              SELECT * FROM ancestors"""
+        query = sql_text(
+            """WITH RECURSIVE ancestors(parent, child) AS (
+            VALUES (:term_id, NULL)
+            UNION
+            -- The children of the given term:
+            SELECT object AS parent, subject AS child
+            FROM statements
+            WHERE predicate = :pred
+              AND object = :term_id
+            UNION
+            --- Children of the children of the given term
+            SELECT object AS parent, subject AS child
+            FROM statements
+            WHERE object IN (SELECT subject FROM statements
+                             WHERE predicate = :pred AND object = :term_id)
+              AND predicate = :pred
+            UNION
+            -- The non-blank parents of all of the parent terms extracted so far:
+            SELECT object AS parent, subject AS child
+            FROM statements, ancestors
+            WHERE ancestors.parent = statements.stanza
+              AND statements.predicate = :pred
+              AND statements.object NOT LIKE '_:%%'
+          )
+          SELECT * FROM ancestors"""
         )
+        results = conn.execute(query, term_id=term_id, pred=pred)
     results = [[x["parent"], x["child"]] for x in results]
     if add_children:
         results.extend([[term_id, child] for child in add_children])
@@ -855,11 +896,11 @@ def get_sorted_predicates(conn: Connection, exclude_ids: list = None) -> list:
         all_predicate_ids = [x for x in all_predicate_ids if x not in exclude_ids]
 
     # Retrieve predicates with labels
-    ap_str = ", ".join([f"'{x}'" for x in all_predicate_ids])
-    results = conn.execute(
-        f"""SELECT DISTINCT subject, value
-        FROM statements WHERE subject IN ({ap_str}) AND predicate = 'rdfs:label';"""
-    )
+    query = sql_text(
+        """SELECT DISTINCT subject, value
+        FROM statements WHERE subject IN :ap AND predicate = 'rdfs:label';"""
+    ).bindparams(bindparam("ap", expanding=True))
+    results = conn.execute(query, {"ap": all_predicate_ids})
     predicate_label_map = {x["subject"]: x["value"] for x in results}
 
     # Add unlabeled predicates to map with label = ID
@@ -888,10 +929,10 @@ def get_ontology(conn: Connection, prefixes: list) -> (str, str):
     for prefix, base in prefixes:
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
-    res = conn.execute(
-        f"""SELECT value FROM statements
-            WHERE stanza = '{iri}' AND subject = '{iri}' AND predicate = '{dct}'"""
-    ).fetchone()
+    query = sql_text(
+        "SELECT value FROM statements WHERE stanza = :iri AND subject = :iri AND predicate = :dct"
+    )
+    res = conn.execute(query, iri=iri, dct=dct).fetchone()
     if not res:
         return iri, None
     return iri, res["value"]
@@ -925,6 +966,7 @@ def term2rdfa(
         else:
             pred = None
             if term_id == "owl:Individual":
+                # No user input, safe to use f-string for query
                 tls = ", ".join([f"'{x}'" for x in TOP_LEVELS.keys()])
                 results = conn.execute(
                     f"""SELECT DISTINCT subject FROM statements
@@ -946,27 +988,28 @@ def term2rdfa(
                 if term_id == "owl:Class":
                     pred = "rdfs:subClassOf"
                 # Select all classes without parents and set them as children of owl:Thing
-                results = conn.execute(
-                    f"""SELECT DISTINCT subject FROM statements 
+                query = sql_text(
+                    """SELECT DISTINCT subject FROM statements 
                     WHERE subject NOT IN 
                         (SELECT subject FROM statements
-                         WHERE predicate = '{pred}'
+                         WHERE predicate = :pred
                          AND object != 'owl:Thing')
                     AND subject IN 
                         (SELECT subject FROM statements 
                          WHERE predicate = 'rdf:type'
-                         AND object = '{term_id}' AND subject NOT LIKE '_:%%'
+                         AND object = :term_id AND subject NOT LIKE '_:%%'
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
                 )
+                results = conn.execute(query, pred=pred, term_id=term_id)
             children = [res["subject"] for res in results]
             child_children = defaultdict(set)
             if pred and children:
                 # Get children of children for classes & properties
-                children_str = ", ".join([f"'{x}'" for x in children])
-                results = conn.execute(
-                    f"""SELECT DISTINCT object AS parent, subject AS child FROM statements
-                    WHERE predicate = '{pred}' AND object IN ({children_str})"""
-                )
+                query = sql_text(
+                    """SELECT DISTINCT object AS parent, subject AS child FROM statements
+                    WHERE predicate = :pred AND object IN :children"""
+                ).bindparams(bindparam("pred"), bindparam("children", expanding=True))
+                results = conn.execute(query, {"pred": pred, "children": children})
                 for res in results:
                     p = res["parent"]
                     if p not in child_children:
@@ -1000,14 +1043,11 @@ def term2rdfa(
     # Get all of the rdfs:labels corresponding to all of the compact URIs, in the form of a map
     # from compact URIs to labels:
     labels = {}
-    ids = "', '".join(curies)
-    results = conn.execute(
-        f"""SELECT subject, value
-      FROM statements
-      WHERE stanza IN ('{ids}')
-        AND predicate = 'rdfs:label'
-        AND value IS NOT NULL"""
-    )
+    query = sql_text(
+        """SELECT subject, value FROM statements
+        WHERE stanza IN :ids AND predicate = 'rdfs:label' AND value IS NOT NULL"""
+    ).bindparams(bindparam("ids", expanding=True))
+    results = conn.execute(query, {"ids": list(curies)})
     for res in results:
         labels[res["subject"]] = res["value"]
     for t, o_label in TOP_LEVELS.items():
@@ -1016,13 +1056,11 @@ def term2rdfa(
         labels[ontology_iri] = ontology_title
 
     obsolete = []
-    results = conn.execute(
-        f"""SELECT DISTINCT subject
-            FROM statements
-            WHERE stanza in ('{ids}')
-              AND predicate='owl:deprecated'
-              AND value='true'"""
-    )
+    query = sql_text(
+        """SELECT DISTINCT subject FROM statements
+        WHERE stanza in :ids AND predicate='owl:deprecated' AND value='true'"""
+    ).bindparams(bindparam("ids", expanding=True))
+    results = conn.execute(query, {"ids": list(curies)})
     for res in results:
         obsolete.append(res["subject"])
 
@@ -1056,11 +1094,6 @@ def term2rdfa(
     si = None
     subject_label = None
     if term_id == "ontology" and ontology_iri:
-        # TODO - is this stanza used?
-        results = conn.execute(
-            f"""SELECT stanza, subject, predicate, object, value, datatype, language FROM statements
-            WHERE subject = '{ontology_iri}'"""
-        )
         subject = ontology_iri
         subject_label = data["labels"].get(ontology_iri, ontology_iri)
         si = curie2iri(prefixes, subject)
@@ -1125,7 +1158,9 @@ def term2rdfa(
     return ps, term
 
 
-def parent2tree(data: dict, treename: str, selected_term, selected_children, node, href="?id={curie}") -> list:
+def parent2tree(
+    data: dict, treename: str, selected_term, selected_children, node, href="?id={curie}"
+) -> list:
     """Return a hiccup-style HTML vector of the full hierarchy for a parent node."""
     cur_hierarchy = ["ul", ["li", tree_label(data, treename, selected_term), selected_children]]
     if node in TOP_LEVELS:
@@ -1175,7 +1210,14 @@ def parent2tree(data: dict, treename: str, selected_term, selected_children, nod
     return cur_hierarchy
 
 
-def term2tree(data: dict, treename: str, term_id: str, entity_type: str, href: str = "?id={curie}", max_children: int = 100) -> list:
+def term2tree(
+    data: dict,
+    treename: str,
+    term_id: str,
+    entity_type: str,
+    href: str = "?id={curie}",
+    max_children: int = 100,
+) -> list:
     """Create a hiccup-style HTML hierarchy vector for the given term."""
     if treename not in data or term_id not in data[treename]:
         return []
