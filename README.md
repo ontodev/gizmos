@@ -1,12 +1,29 @@
 # gizmos
 Utilities for ontology development
 
+### Installation
+
+You can install `gizmos` by running:
+```
+python3 -m pip install ontodev-gizmos
+```
+
+This will include all requirements for using `gizmos` with SQLite databases. If you plan to use a PostgreSQL database, you must also install the [`psycopg2`](https://pypi.org/project/psycopg2/) module:
+```
+python3 -m pip install psycopg2
+````
+
 ### Testing
 
 For development, we recommend installing and testing using:
 ```
 python3 -m pip install -e .
 python3 setup.py pytest
+```
+
+For running the PostgreSQL tests in Docker, you must set up postgres:
+```
+docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres
 ```
 
 There are some dependencies that are test-only (e.g., will not be listed in the project requirements). If you try and run `pytest` alone, it may fail due to missing dependencies.
