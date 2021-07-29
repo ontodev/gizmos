@@ -15,7 +15,7 @@ setup(
     description="Gizmos for ontology development",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="0.1.6",
+    version="0.2.0",
     author="James A Overton",
     author_email="james@overton.ca",
     classifiers=[
