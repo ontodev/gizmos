@@ -4,5 +4,4 @@ html5lib==1.1
 pyRdfa3==3.5.3
 pytest==6.0.2
 rdflib==5.0.0
-setuptools~=57.0.0
 SQLAlchemy~=1.4.20
