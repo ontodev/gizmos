@@ -1,9 +1,8 @@
 import logging
-import psycopg2
-import sqlite3
 import sys
 
 from argparse import ArgumentParser
+from sqlalchemy.engine.base import Connection
 from .helpers import get_connection
 
 
@@ -33,55 +32,68 @@ def main():
             logger.error("Invalid --limit option: " + lim)
             sys.exit(1)
 
-    conn = get_connection(args.db)
-    check(conn, limit=limit)
+    with get_connection(args.db) as conn:
+        if not check(conn, limit=limit):
+            sys.exit(1)
 
 
-def check(conn, limit=10):
+def check(conn: Connection, limit: int = 10) -> bool:
+    """Check for a 'prefix' and 'statements' table in the database, then check the contents.
+
+    :param conn: sqlalchemy database connection
+    :param limit: max number of messages to log
+    :return: True on success
+    """
     logger = logging.getLogger()
-    cur = conn.cursor()
-    if isinstance(conn, sqlite3.Connection):
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    if str(conn.engine.url).startswith("sqlite"):
+        res = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
     else:
-        cur.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        res = conn.execute(
+            "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public'"
         )
-    tables = [x[0] for x in cur.fetchall()]
+    tables = [x["name"] for x in res]
 
     if "prefix" not in tables:
         logger.error("missing 'prefix' table")
         prefix_ok = False
     else:
-        prefix_ok = check_prefix(cur)
+        prefix_ok = check_prefix(conn)
 
     statements_ok = True
     if "statements" not in tables:
         logger.error("missing 'statements' table")
         statements_ok = False
     elif prefix_ok:
-        statements_ok = check_statements(cur, limit=limit)
+        statements_ok = check_statements(conn, limit=limit)
 
     if not statements_ok or not prefix_ok:
-        sys.exit(1)
+        return False
+    return True
 
 
-def check_prefix(cur):
-    """Check the structure of the prefix table. It must have the columns 'prefix' and 'base'."""
+def check_prefix(conn: Connection) -> bool:
+    """Check the structure of the prefix table. It must have the columns 'prefix' and 'base'.
+
+    :param conn: sqlalchemy database connection
+    :return: True on success"""
     logger = logging.getLogger()
 
     # Check for required columns
-    if isinstance(cur, sqlite3.Cursor):
-        cur.execute("PRAGMA table_info(prefix)")
-        columns = {x[1]: x[2] for x in cur.fetchall()}
+    if str(conn.engine.url).startswith("sqlite"):
+        res = conn.execute("PRAGMA table_info(prefix)")
     else:
-        columns = get_postgres_columns(cur, "prefix")
+        res = conn.execute(
+            """SELECT column_name AS name, data_type AS type FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_NAME = 'prefix';"""
+        )
+    columns = {x["name"]: x["type"] for x in res}
     missing = []
     bad_type = []
     for col in ["prefix", "base"]:
-        coltype = columns.get(col)
+        coltype = columns.get(col).lower()
         if not coltype:
             missing.append(col)
-        elif coltype != "TEXT":
+        elif coltype != "text":
             bad_type.append(col)
     if missing:
         logger.error("'prefix' is missing column(s): " + ", ".join(missing))
@@ -93,8 +105,7 @@ def check_prefix(cur):
     # Check for required prefixes
     missing_prefixes = []
     for prefix in ["owl", "rdf", "rdfs"]:
-        cur.execute(f"SELECT * FROM prefix WHERE prefix = '{prefix}'")
-        res = cur.fetchone()
+        res = conn.execute(f"SELECT * FROM prefix WHERE prefix = '{prefix}'").fetchone()
         if not res:
             missing_prefixes.append(prefix)
     if missing_prefixes:
@@ -103,17 +114,24 @@ def check_prefix(cur):
     return True
 
 
-def check_statements(cur, limit=10):
-    """Check the structure of the statements table then check the values of the columns."""
+def check_statements(conn: Connection, limit: int = 10) -> bool:
+    """Check the structure of the statements table then check the values of the columns.
+
+    :param conn: sqlalchemy database connection
+    :param limit: max number of messages to log
+    :return: True on success"""
     logger = logging.getLogger()
     statements_ok = True
 
     # First check the structure
-    if isinstance(cur, sqlite3.Cursor):
-        cur.execute("PRAGMA table_info(statements)")
-        columns = {x[1]: x[2] for x in cur.fetchall()}
+    if str(conn.engine.url).startswith("sqlite"):
+        res = conn.execute("PRAGMA table_info(statements)")
     else:
-        columns = get_postgres_columns(cur, "statements")
+        res = conn.execute(
+            """SELECT column_name AS name, data_type AS type FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'statements';"""
+        )
+    columns = {x["name"]: x["type"] for x in res}
     missing = []
     bad_type = []
     for col in [
@@ -125,10 +143,10 @@ def check_statements(cur, limit=10):
         "datatype",
         "language",
     ]:
-        coltype = columns.get(col)
+        coltype = columns.get(col).lower()
         if not coltype:
             missing.append(col)
-        elif coltype != "TEXT":
+        elif coltype != "text":
             bad_type.append(col)
     if missing:
         logger.error("'statements' is missing column(s): " + ", ".join(missing))
@@ -139,17 +157,16 @@ def check_statements(cur, limit=10):
 
     # Check for an index on the stanza column, warn if missing (do not fail)
     has_stanza_idx = False
-    if isinstance(cur, sqlite3.Cursor):
-        cur.execute("PRAGMA index_list(statements)")
-        for row in cur.fetchall():
-            index = row[1]
-            cur.execute(f"PRAGMA index_info({index})")
-            col = cur.fetchone()[2]
+    if str(conn.engine.url).startswith("sqlite"):
+        for res in conn.execute("PRAGMA index_list(statements)"):
+            index = res["name"]
+            col_res = conn.execute(f"PRAGMA index_info({index})").fetchone()
+            col = col_res.fetchone()["name"]
             if col == "stanza":
                 has_stanza_idx = True
                 break
     else:
-        cur.execute(
+        results = conn.execute(
             """SELECT a.attname AS column_name
                FROM pg_class t, pg_class i, pg_index ix, pg_attribute a
                WHERE
@@ -160,8 +177,8 @@ def check_statements(cur, limit=10):
                 and t.relkind = 'r'
                 and t.relname = 'statements';"""
         )
-        for row in cur.fetchall():
-            if row[0] == "stanza":
+        for res in results:
+            if res["column_name"] == "stanza":
                 has_stanza_idx = True
                 break
     if not has_stanza_idx:
@@ -178,17 +195,17 @@ def check_statements(cur, limit=10):
         message_count += 1
 
     # Get prefixes to check against
-    cur.execute("SELECT prefix, base FROM prefix")
-    prefixes = {x[0]: x[1] for x in cur.fetchall()}
+    res = conn.execute("SELECT prefix, base FROM prefix")
+    prefixes = {x["prefix"]: x["base"] for x in res}
 
     # Check subjects, stanzas, predicates, and objects
     for col in ["stanza", "subject", "predicate", "object"]:
         if limit and message_count >= limit:
             # Do not exceed the limit of messages
             break
-        cur.execute(f"SELECT {col} FROM statements")
-        for row in cur.fetchall():
-            value = row[0]
+        results = conn.execute(f"SELECT {col} FROM statements")
+        for res in results:
+            value = res[col]
             if value is None:
                 if col != "object":
                     # Object can be null when there is a value
@@ -221,22 +238,6 @@ def check_statements(cur, limit=10):
                 message_count += 1
                 statements_ok = False
     return statements_ok
-
-
-def get_postgres_columns(cur, table):
-    """Get a dictionary of column name to its type from a PostgreSQL database."""
-    cur.execute(f"SELECT * FROM {table} LIMIT 0")
-    columns = {}
-    for desc in cur.description:
-        type_oid = desc[1]
-        cur.execute(f"SELECT typname FROM pg_type WHERE oid = {type_oid}")
-        res = cur.fetchone()
-        if res:
-            typename = res[0].upper()
-        else:
-            typename = None
-        columns[desc[0]] = typename
-    return columns
 
 
 if __name__ == "__main__":

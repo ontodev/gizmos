@@ -1,5 +1,15 @@
+import sys
+
 from copy import deepcopy
 import translationUtil as tUtil
+
+DEBUG = True
+
+
+def log(message):
+    if DEBUG:
+        print(message, file=sys.stderr)
+
 
 def handleAllDisjointClasses(subjects):
     remove = set()

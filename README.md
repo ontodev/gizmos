@@ -1,12 +1,29 @@
 # gizmos
 Utilities for ontology development
 
+### Installation
+
+You can install `gizmos` by running:
+```
+python3 -m pip install ontodev-gizmos
+```
+
+This will include all requirements for using `gizmos` with SQLite databases. If you plan to use a PostgreSQL database, you must also install the [`psycopg2`](https://pypi.org/project/psycopg2/) module:
+```
+python3 -m pip install psycopg2
+````
+
 ### Testing
 
 For development, we recommend installing and testing using:
 ```
 python3 -m pip install -e .
 python3 setup.py pytest
+```
+
+For running the PostgreSQL tests in Docker, you must set up postgres:
+```
+docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres
 ```
 
 There are some dependencies that are test-only (e.g., will not be listed in the project requirements). If you try and run `pytest` alone, it may fail due to missing dependencies.
@@ -35,7 +52,7 @@ After loading the OWL into the database, we highly recommend creating an index o
 sqlite3 [path-to-database] "CREATE INDEX stanza_idx ON statements(stanza);"
 ```
 
-When using `gizmos` as a Python module, all operations accept a database connection object. For details on the Connection, see [Python Database API Connection Objects](https://www.python.org/dev/peps/pep-0249/#connection-objects). We support [sqlite3](https://docs.python.org/3/library/sqlite3.html) and [psycopg2](https://pypi.org/project/psycopg2/) (PostgreSQL). Using other connection objects may result in unanticipated errors due to slight variations in syntax.
+When using `gizmos` as a Python module, all operations accept a `sqlalchemy` Connection object. For details on the Connection, see [Working with Engines and Connections](https://docs.sqlalchemy.org/en/14/core/connections.html). We currently support SQLite and PostgreSQL. Using other connections may result in unanticipated errors due to slight variations in syntax. Note that if you use a PostgreSQL database, you must install or include `psycopg2` in your requirements.
 
 ## Modules
 

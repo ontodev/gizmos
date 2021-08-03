@@ -1,14 +1,15 @@
-import psycopg2
-import sqlite3
-
-from gizmos.extract import extract_terms
+from gizmos.extract import extract
 from rdflib import Graph
-from util import test_conn, test_db, create_postgresql_db, create_sqlite_db, compare_graphs
+from sqlalchemy import create_engine
+from util import create_postgresql_db, create_sqlite_db, compare_graphs, postgres_url, sqlite_url
 
 
 def extract_no_hierarchy(conn):
-    ttl = extract_terms(
-        conn, {"OBI:0100046": {}, "BFO:0000040": {}}, ["rdfs:label", "IAO:0010000"], no_hierarchy=True
+    ttl = extract(
+        conn,
+        {"OBI:0100046": {}, "BFO:0000040": {}},
+        ["rdfs:label", "IAO:0010000"],
+        no_hierarchy=True,
     )
 
     actual = Graph()
@@ -21,9 +22,7 @@ def extract_no_hierarchy(conn):
 
 
 def extract_with_ancestors(conn):
-    ttl = extract_terms(
-        conn, {"OBI:0100046": {"Related": "ancestors"}}, ["rdfs:label", "IAO:0010000"]
-    )
+    ttl = extract(conn, {"OBI:0100046": {"Related": "ancestors"}}, ["rdfs:label", "IAO:0010000"])
 
     actual = Graph()
     actual.parse(data=ttl, format="turtle")
@@ -35,9 +34,7 @@ def extract_with_ancestors(conn):
 
 
 def extract_with_children(conn):
-    ttl = extract_terms(
-        conn, {"BFO:0000040": {"Related": "children"}}, ["rdfs:label", "IAO:0010000"]
-    )
+    ttl = extract(conn, {"BFO:0000040": {"Related": "children"}}, ["rdfs:label", "IAO:0010000"])
 
     actual = Graph()
     actual.parse(data=ttl, format="turtle")
@@ -49,9 +46,7 @@ def extract_with_children(conn):
 
 
 def extract_with_descendants(conn):
-    ttl = extract_terms(
-        conn, {"BFO:0000040": {"Related": "descendants"}}, ["rdfs:label", "IAO:0010000"]
-    )
+    ttl = extract(conn, {"BFO:0000040": {"Related": "descendants"}}, ["rdfs:label", "IAO:0010000"])
 
     actual = Graph()
     actual.parse(data=ttl, format="turtle")
@@ -63,9 +58,7 @@ def extract_with_descendants(conn):
 
 
 def extract_with_parents(conn):
-    ttl = extract_terms(
-        conn, {"OBI:0100046": {"Related": "parents"}}, ["rdfs:label", "IAO:0010000"]
-    )
+    ttl = extract(conn, {"OBI:0100046": {"Related": "parents"}}, ["rdfs:label", "IAO:0010000"])
 
     actual = Graph()
     actual.parse(data=ttl, format="turtle")
@@ -77,7 +70,8 @@ def extract_with_parents(conn):
 
 
 def test_extract_postgresql(create_postgresql_db):
-    with psycopg2.connect(**test_conn) as conn:
+    engine = create_engine(postgres_url)
+    with engine.connect() as conn:
         extract_with_ancestors(conn)
         extract_with_children(conn)
         extract_with_descendants(conn)
@@ -86,7 +80,8 @@ def test_extract_postgresql(create_postgresql_db):
 
 
 def test_extract_sqlite(create_sqlite_db):
-    with sqlite3.connect(test_db) as conn:
+    engine = create_engine(sqlite_url)
+    with engine.connect() as conn:
         extract_with_ancestors(conn)
         extract_with_children(conn)
         extract_with_descendants(conn)
