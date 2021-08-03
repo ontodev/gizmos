@@ -186,8 +186,8 @@ def check_statements(conn: Connection, limit: int = 10) -> bool:
 
     # Check that no row has both an object and a value
     message_count = 0
-    cur.execute("SELECT * FROM statements WHERE object IS NOT NULL AND value IS NOT NULL")
-    invalid = len(cur.fetchall())
+    res = conn.execute("SELECT * FROM statements WHERE object IS NOT NULL AND value IS NOT NULL")
+    invalid = len(res)
     if invalid:
         logger.error(
             f"{invalid} rows where both 'object' and 'value' have values (one must be NULL)"
