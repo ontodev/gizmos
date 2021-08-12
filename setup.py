@@ -6,7 +6,7 @@ here = path.abspath(path.dirname(__file__))
 with open(here + "/README.md", "r") as fh:
     long_description = fh.read()
 
-install_requires = ["rdflib-jsonld"]
+install_requires = ["rdflib-jsonld", "SQLAlchemy"]
 
 test_requires = ["html5lib", "pyRdfa3", "pytest", "rdflib"]
 
