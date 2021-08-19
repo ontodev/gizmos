@@ -39,7 +39,7 @@ def main():
 
 def search(
     conn: Connection,
-    text: str,
+    search_text: str,
     label: str = "rdfs:label",
     short_label: str = None,
     synonyms: list = None,
@@ -47,14 +47,14 @@ def search(
 ) -> str:
     """Return a string containing the search results in JSON format."""
     res = get_search_results(
-        conn, text, label=label, short_label=short_label, synonyms=synonyms, limit=limit
+        conn, search_text, label=label, short_label=short_label, synonyms=synonyms, limit=limit
     )
     return json.dumps(res, indent=4)
 
 
 def get_search_results(
     conn: Connection,
-    text: str,
+    search_text: str,
     label: str = "rdfs:label",
     short_label: str = None,
     synonyms: list = None,
@@ -68,13 +68,13 @@ def get_search_results(
     - property
     - order"""
     names = defaultdict(dict)
-    if text:
+    if search_text:
         # Get labels
         query = sql_text(
             """SELECT DISTINCT subject, value FROM statements
-            WHERE predicate = :label AND value LIKE :text"""
+            WHERE predicate = :label AND lower(value) LIKE :text"""
         )
-        results = conn.execute(query, label=label, text=f"%%{text}%%")
+        results = conn.execute(query, label=label, text=f"%%{search_text.lower()}%%")
         for res in results:
             term_id = res["subject"]
             if term_id not in names:
@@ -84,8 +84,10 @@ def get_search_results(
         # Get short labels
         if short_label:
             if short_label.lower() == "id":
-                query = sql_text("SELECT DISTINCT stanza FROM statements WHERE stanza LIKE :text")
-                results = conn.execute(query, text=f"%%{text}%%")
+                query = sql_text(
+                    "SELECT DISTINCT stanza FROM statements WHERE lower(stanza) LIKE :text"
+                )
+                results = conn.execute(query, text=f"%%{search_text.lower()}%%")
                 for res in results:
                     term_id = res["stanza"]
                     if term_id not in names:
@@ -96,9 +98,9 @@ def get_search_results(
             else:
                 query = sql_text(
                     """SELECT DISTINCT subject, value FROM statements
-                    WHERE predicate = :short_label AND value LIKE :text"""
+                    WHERE predicate = :short_label AND lower(value) LIKE :text"""
                 )
-                results = conn.execute(query, short_label=short_label, text=f"%%{text}%%")
+                results = conn.execute(query, short_label=short_label, text=f"%%{search_text.lower()}%%")
                 for res in results:
                     term_id = res["subject"]
                     if term_id not in names:
@@ -110,9 +112,9 @@ def get_search_results(
             for syn in synonyms:
                 query = sql_text(
                     """SELECT DISTINCT subject, value FROM statements
-                    WHERE predicate = :syn AND value LIKE :text"""
+                    WHERE predicate = :syn AND lower(value) LIKE :text"""
                 )
-                results = conn.execute(query, syn=syn, text=f"%%{text}%%")
+                results = conn.execute(query, syn=syn, text=f"%%{search_text.lower()}%%")
                 for res in results:
                     term_id = res["subject"]
                     value = res["value"]
