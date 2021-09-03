@@ -56,8 +56,7 @@ def main():
         try:
             limit = int(args.limit)
         except ValueError:
-            print("ERROR: --limit must be an integer")
-            sys.exit(1)
+            raise RuntimeError("--limit must be an integer")
 
     if args.href:
         href = args.href
