@@ -50,13 +50,13 @@ def main():
     )
     args = p.parse_args()
 
-    if args.limit == "none":
+    if args.limit.lower() == "none":
         limit = None
     else:
         try:
             limit = int(args.limit)
         except ValueError:
-            raise RuntimeError("--limit must be an integer")
+            raise RuntimeError("--limit must be an integer or 'none'")
 
     if args.href:
         href = args.href

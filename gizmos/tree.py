@@ -220,7 +220,7 @@ def tree(
                         "placeholder": "Search",
                     },
                 ],
-                ["input", {"name": "db", "value": treename, "type": "hidden"}]
+                ["input", {"name": "db", "value": treename, "type": "hidden"}],
             ]
         )
     body = body_wrapper + body
