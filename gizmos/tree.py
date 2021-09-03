@@ -207,18 +207,20 @@ def tree(
     if include_search:
         body_wrapper.append(
             [
-                "div",
-                {"class": "form-row mt-2 mb-2"},
+                "form",
+                {"class": "form-row mt-2 mb-2", "method": "get"},
                 [
                     "input",
                     {
                         "id": f"statements-typeahead",
+                        "name": "search_text",
                         "class": "typeahead form-control",
                         "type": "text",
                         "value": "",
                         "placeholder": "Search",
                     },
                 ],
+                ["input", {"name": "db", "value": treename, "type": "hidden"}]
             ]
         )
     body = body_wrapper + body
@@ -267,97 +269,97 @@ def tree(
             # Add tree name to query params
             remote = f"'?db={treename}&text=%QUERY&format=json'"
         js += (
-            """
-    $('#search-form').submit(function () {
-        $(this)
-            .find('input[name]')
-            .filter(function () {
-                return !this.value;
-            })
-            .prop('name', '');
-    });
-    function jump(currentPage) {
-      newPage = prompt("Jump to page", currentPage);
-      if (newPage) {
-        href = window.location.href.replace("page="+currentPage, "page="+newPage);
-        window.location.href = href;
-      }
-    }
-    function configure_typeahead(node) {
-      if (!node.id || !node.id.endsWith("-typeahead")) {
-        return;
-      }
-      table = node.id.replace("-typeahead", "");
-      var bloodhound = new Bloodhound({
-        datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
-        queryTokenizer: Bloodhound.tokenizers.nonword,
-        sorter: function(a, b) {
-          return a.order - b.order;
-        },
-        remote: {
-          url: """
-            + remote
-            + """,
-          wildcard: '%QUERY',
-          transform : function(response) {
-              return bloodhound.sorter(response);
+                """
+        $('#search-form').submit(function () {
+            $(this)
+                .find('input[name]')
+                .filter(function () {
+                    return !this.value;
+                })
+                .prop('name', '');
+        });
+        function jump(currentPage) {
+          newPage = prompt("Jump to page", currentPage);
+          if (newPage) {
+            href = window.location.href.replace("page="+currentPage, "page="+newPage);
+            window.location.href = href;
           }
         }
-      });
-      $(node).typeahead({
-        minLength: 0,
-        hint: false,
-        highlight: true
-      }, {
-        name: table,
-        source: bloodhound,
-        display: function(item) {
-          if (item.label && item.short_label && item.synonym) {
-            return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
-          } else if (item.label && item.short_label) {
-            return item.short_label + ' - ' + item.label;
-          } else if (item.label && item.synonym) {
-            return item.label + ' - ' + item.synonym;
-          } else if (item.short_label && item.synonym) {
-            return item.short_label + ' - ' + item.synonym;
-          } else if (item.short_label && !item.label) {
-            return item.short_label;
-          } else {
-            return item.label;
+        function configure_typeahead(node) {
+          if (!node.id || !node.id.endsWith("-typeahead")) {
+            return;
           }
-        },
-        limit: 40
-      });
-      $(node).bind('click', function(e) {
-        $(node).select();
-      });
-      $(node).bind('typeahead:select', function(ev, suggestion) {
-        $(node).prev().val(suggestion.id);
-        go(table, suggestion.id);
-      });
-      $(node).bind('keypress',function(e) {
-        if(e.which == 13) {
-          go(table, $('#' + table + '-hidden').val());
-        }
-      });
-    }
-    $('.typeahead').each(function() { configure_typeahead(this); });
-    function go(table, value) {
-      q = {}
-      table = table.replace('_all', '');
-      q[table] = value
-      window.location = query(q);
-    }
-    function query(obj) {
-      var str = [];
-      for (var p in obj)
-        if (obj.hasOwnProperty(p)) {
-          """
-            + js_funct
-            + """
-        }
-      return str.join("&");
-    }"""
+          table = node.id.replace("-typeahead", "");
+          var bloodhound = new Bloodhound({
+            datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
+            queryTokenizer: Bloodhound.tokenizers.nonword,
+            sorter: function(a, b) {
+              return a.order - b.order;
+            },
+            remote: {
+              url: """
+                + remote
+                + """,
+             wildcard: '%QUERY',
+             transform : function(response) {
+                 return bloodhound.sorter(response);
+             }
+           }
+         });
+         $(node).typeahead({
+           minLength: 0,
+           hint: false,
+           highlight: true
+         }, {
+           name: table,
+           source: bloodhound,
+           display: function(item) {
+             if (item.label && item.short_label && item.synonym) {
+               return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
+             } else if (item.label && item.short_label) {
+               return item.short_label + ' - ' + item.label;
+             } else if (item.label && item.synonym) {
+               return item.label + ' - ' + item.synonym;
+             } else if (item.short_label && item.synonym) {
+               return item.short_label + ' - ' + item.synonym;
+             } else if (item.short_label && !item.label) {
+               return item.short_label;
+             } else {
+               return item.label;
+             }
+           },
+           limit: 40
+         });
+         $(node).bind('click', function(e) {
+           $(node).select();
+         });
+         $(node).bind('typeahead:select', function(ev, suggestion) {
+           $(node).prev().val(suggestion.id);
+           go(table, suggestion.id);
+         });
+         $(node).bind('keypress',function(e) {
+           if(e.which == 13) {
+             go(table, $('#' + table + '-hidden').val());
+           }
+         });
+       }
+       $('.typeahead').each(function() { configure_typeahead(this); });
+       function go(table, value) {
+         q = {}
+         table = table.replace('_all', '');
+         q[table] = value
+         window.location = query(q);
+       }
+       function query(obj) {
+         var str = [];
+         for (var p in obj)
+           if (obj.hasOwnProperty(p)) {
+             """
+                + js_funct
+                + """
+           }
+         return str.join("&");
+       }"""
         )
 
     body.append(["script", {"type": "text/javascript"}, js])
@@ -415,7 +417,7 @@ def tree(
           width: 0em;
           margin-left: -1em;
         }
-        #nonpeptides .tt-dataset {
+        .tt-dataset {
           max-height: 300px;
           overflow-y: scroll;
         }

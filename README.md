@@ -181,7 +181,7 @@ This is a TSV or CSV with the following headers:
 
 The config file can be useful for handling multiple imports with different options in a `Makefile`. If your imports all use the same `--intermediates` option and the same predicates, there is no need to specify a config file.
 
-### `gizmos.search`
+### `gizmos.search` - JSON
 
 The `search` module returns a list of JSON objects for use with the tree browser search bar.
 
@@ -190,7 +190,7 @@ Usage in the command line:
 python3 -m gizmos.search [path-to-database] [search-text] > [output-json]
 ```
 
-Usage in Python (with defaults for optional parameters):
+Usage in Python (with defaults for optional parameters - only the first two parameters are required):
 ```python
 json = gizmos.search(     # returns: JSON string
     database_connection,  # Connection: database connection object
@@ -198,7 +198,12 @@ json = gizmos.search(     # returns: JSON string
     label="rdfs:label",   # string: term ID for label
     short_label=None,     # string: term ID for short label
     synonyms=None,        # list: term IDs for synonyms
-    limit=30              # int: max results to return
+    limit=30,             # int: max results to return
+    fmt="json",           # str: output format (json or html)
+    href="?id={curie}",   # str: href format for HTML output (see below)
+    db=None,              # str: db name for HTML output (see below)
+    include_search=False, # boolean: if True, include search bar in HTML (see below)
+    standalone=True       # boolean: if False, do not include HTML headers (see below)
 )
 ```
 
@@ -220,7 +225,21 @@ When both short label and synonym(s) are provided and the matching term has both
 
 Search is run over all three properties, so even if a term's label does not match the text, it may still be returned if the synonym matches.
 
-Finally, the search only returns the first 30 results by default. If you wish to return less or more, you can specify this with `--limit <int>`/`-l <int>`.
+Finally, the search only returns the first 30 results by default. If you wish to return less or more, you can specify this with `--limit <int>`/`-l <int>`. If you wish to include *all* search results, you can include `-l none`.
+
+### `gizmos.search` - HTML
+
+You can also return the search results as an HTML page. The module includes a few additional options to do this, but minimally, you need to include `-f`/`--format`:
+
+```
+python3 -m gizmos.search [path-to-database] [search-text] -f html > [output-html]
+```
+
+The additional options for use with the HTML output are:
+* `-H`/`--href`: the query string format to use in links to search results, see [Tree Links](#tree-links)
+* `d`/`--db-name`: the name of the database if you want to include it in your `href`
+* `-r`/`--include-search`: flag to include a search bar at the top of the search results page
+* `-c`/`--contents-only`: flag to only produce HTML content without the `<html>` and `<body>` tags
 
 ### `gizmos.tree`
 
