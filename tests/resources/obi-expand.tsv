@@ -1,0 +1,18 @@
+ID	Reason
+BFO:0000001	defined in input
+BFO:0000002	descendant of BFO:0000001
+BFO:0000003	ancestor of OBI:0000666 & descendant of BFO:0000001
+BFO:0000004	descendant of BFO:0000001
+BFO:0000015	ancestor of OBI:0000666 & descendant of BFO:0000001
+BFO:0000040	descendant of BFO:0000001
+OBI:0000011	ancestor of OBI:0000666 & descendant of BFO:0000001
+OBI:0000576	descendant of BFO:0000001
+OBI:0000666	defined in input
+OBI:0000793	descendant of BFO:0000001
+OBI:0000804	descendant of BFO:0000001
+OBI:0000822	descendant of BFO:0000001
+OBI:0000826	descendant of BFO:0000001
+OBI:0000842	descendant of BFO:0000001
+OBI:0100046	descendant of BFO:0000001
+OBI:0200000	ancestor of OBI:0000666 & descendant of BFO:0000001
+OBI:0302729	descendant of BFO:0000001

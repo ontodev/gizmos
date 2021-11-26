@@ -73,6 +73,95 @@ def escape_qnames(conn: Connection, table: str):
                 conn.execute(query, escaped=escaped, curie=curie)
 
 
+def get_all_descendants(conn: Connection, term_id: str) -> set:
+    """Return a set of descendants for a given term ID."""
+    query = sql_text(
+        """WITH RECURSIVE descendants(node) AS (
+            VALUES (:term_id)
+            UNION
+             SELECT stanza AS node
+            FROM statements
+            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND stanza = :term_id
+            UNION
+            SELECT stanza AS node
+            FROM statements, descendants
+            WHERE descendants.node = statements.object
+              AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+        )
+        SELECT * FROM descendants"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    return set([x[0] for x in results])
+
+
+def get_ancestors(conn: Connection, term_id: str, terms: set, intermediates: str):
+    """"""
+    ancestors = set()
+    if intermediates == "none":
+        # Find first ancestor/s that is/are either:
+        # - in the set of input terms
+        # - a top level term (below owl:Thing)
+        get_top_ancestors(conn, ancestors, term_id, top_terms=terms)
+    else:
+        # Otherwise get a set of ancestors, stopping at terms that are either:
+        # - in the set of input terms
+        # - a top level term (below owl:Thing)
+        get_ancestors_capped(conn, terms, ancestors, term_id)
+    return ancestors
+
+
+def get_ancestors_capped(conn: Connection, top_terms: set, ancestors: set, term_id: str):
+    """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
+    or a top-level term is reached (below owl:Thing).
+
+    :param conn: database connection
+    :param top_terms: set of top terms to stop at
+    :param ancestors: set to collect ancestors in
+    :param term_id: term ID to get the ancestors of"""
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    ancestors.add(term_id)
+    for res in results:
+        o = res["object"]
+        if o == "owl:Thing" or (top_terms and o in top_terms):
+            continue
+        ancestors.add(o)
+        get_ancestors_capped(conn, top_terms, ancestors, o)
+
+
+def get_bottom_descendants(conn: Connection, descendants: set, term_id: str):
+    """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
+    terms are those that are not ever used as the object of an rdfs:subClassOf statement.
+
+    :param conn: database connection
+    :param descendants: a set to add descendants to
+    :param term_id: term ID to get the bottom descendants of
+    """
+    query = sql_text(
+        """SELECT DISTINCT stanza FROM statements
+    WHERE object = :term_id AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+    )
+    results = list(conn.execute(query, term_id=term_id))
+    if not results:
+        descendants.add(term_id)
+    for res in results:
+        get_bottom_descendants(conn, descendants, res["stanza"])
+
+
+def get_children(conn: Connection, term_id: str) -> set:
+    """Return a set of children for a given term ID."""
+    query = sql_text(
+        """SELECT DISTINCT stanza FROM statements
+        WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object = :term_id"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    return set([x["stanza"] for x in results])
+
+
 def get_connection(path: str) -> Union[Connection, None]:
     """"""
     if path.endswith(".db"):
@@ -121,6 +210,18 @@ def get_connection(path: str) -> Union[Connection, None]:
     return None
 
 
+def get_descendants(conn: Connection, term_id: str, intermediates: str):
+    """Get a set of descendants for a given term."""
+    if intermediates == "none":
+        # Find all bottom-level descendants (do not have children)
+        descendants = set()
+        get_bottom_descendants(conn, descendants, term_id)
+        return descendants
+    else:
+        # Get a set of all descendants, including intermediates
+        return get_all_descendants(conn, term_id)
+
+
 def get_ids(conn: Connection, id_or_labels: list) -> list:
     """Create a list of IDs from a list of IDs or labels."""
     ids = []
@@ -140,6 +241,16 @@ def get_ids(conn: Connection, id_or_labels: list) -> list:
     return ids
 
 
+def get_parents(conn: Connection, term_id: str) -> set:
+    """Return a set of parents for a given term ID."""
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    return set([x["object"] for x in results])
+
+
 def get_terms(term_list: list, terms_file: str) -> list:
     """Get a list of terms from a list and/or a file from args."""
     terms = term_list or []
@@ -156,6 +267,34 @@ def get_terms(term_list: list, terms_file: str) -> list:
                 else:
                     terms.append(line.strip())
     return terms
+
+
+def get_top_ancestors(conn: Connection, ancestors: set, term_id: str, top_terms: set = None):
+    """Get the top-level ancestor or ancestors for a given term with no intermediates. The top-level
+    terms are those with no rdfs:subClassOf statement, or direct children of owl:Thing. If top_terms
+    is included, they may also be those terms in that list.
+
+    :param conn: database connection
+    :param ancestors: a set to add ancestors to
+    :param term_id: term ID to get the top ancestor of
+    :param top_terms: a list of top-level terms to stop at
+                      (if an ancestor is in this set, it will be added and recursion will stop)
+    """
+    query = sql_text(
+        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
+        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    ancestors.add(term_id)
+    for res in results:
+        o = res["object"]
+        if o == "owl:Thing":
+            ancestors.add(term_id)
+            break
+        if top_terms and o in top_terms:
+            ancestors.add(o)
+        else:
+            get_top_ancestors(conn, ancestors, o, top_terms=top_terms)
 
 
 def get_ttl(conn: Connection, table: str) -> str:
