@@ -6,6 +6,8 @@ import sys
 
 from argparse import ArgumentParser
 from collections import defaultdict
+from typing import Optional
+
 from gizmos.hiccup import render
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import bindparam
@@ -129,7 +131,7 @@ def main():
 def tree(
     conn: Connection,
     treename: str,
-    term_id: str,
+    term_id: Optional[str],
     href: str = "?id={curie}",
     title: str = None,
     predicate_ids: list = None,
@@ -740,6 +742,8 @@ def curie2iri(prefixes: list, curie: str) -> str:
     """Convert a CURIE to IRI"""
     if curie.startswith("<"):
         return curie.lstrip("<").rstrip(">")
+    elif curie.startswith("_:"):
+        return curie
     for prefix, base in prefixes:
         if curie.startswith(prefix + ":"):
             return curie.replace(prefix + ":", base)
