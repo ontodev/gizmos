@@ -9,6 +9,16 @@ from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import text as sql_text
 from typing import Union
 
+TOP_LEVELS = {
+    "ontology": "Ontology",
+    "owl:Class": "Class",
+    "owl:AnnotationProperty": "Annotation Property",
+    "owl:DataProperty": "Data Property",
+    "owl:ObjectProperty": "Object Property",
+    "owl:Individual": "Individual",
+    "rdfs:Datatype": "Datatype",
+}
+
 
 def add_labels(conn: Connection):
     """Create a temporary labels table. If a term does not have a label, the label is the ID."""
@@ -73,6 +83,32 @@ def escape_qnames(conn: Connection, table: str):
                 conn.execute(query, escaped=escaped, curie=curie)
 
 
+def get_children(conn: Connection, parent_term: str, entity_type: str = "owl:Class"):
+    pred = "rdfs:subPropertyOf"
+    if entity_type == "owl:Class":
+        pred = "rdfs:subClassOf"
+    query = sql_text(
+        "SELECT DISTINCT subject FROM statements WHERE predicate = :pred AND object = :parent"
+    )
+    results = conn.execute(query, pred=pred, parent=parent_term)
+    if parent_term in TOP_LEVELS or parent_term == "owl:Thing":
+        # also get terms with no parent
+        query = sql_text(
+            """SELECT DISTINCT subject FROM statements 
+            WHERE subject NOT IN 
+                (SELECT subject FROM statements
+                 WHERE predicate = :pred
+                 AND object != 'owl:Thing')
+            AND subject IN 
+                (SELECT subject FROM statements 
+                 WHERE predicate = 'rdf:type'
+                 AND object = :term_id AND subject NOT LIKE '_:%%'
+                 AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
+        )
+        results = conn.execute(query, pred=pred, term_id=parent_term)
+    return [x["subject"] for x in results]
+
+
 def get_connection(path: str) -> Union[Connection, None]:
     """"""
     if path.endswith(".db"):
@@ -119,6 +155,81 @@ def get_connection(path: str) -> Union[Connection, None]:
         "Either a database file or a config file must be specified with a .db or .ini extension"
     )
     return None
+
+
+def get_descendants(conn: Connection, parent_term: str, entity_type: str = "owl:Class", include_parents=True):
+    pred = "rdfs:subPropertyOf"
+    if entity_type == "owl:Class":
+        pred = "rdfs:subClassOf"
+    query = sql_text(
+        f"""WITH RECURSIVE ancestors(parent, child) AS (
+        VALUES (:term_id, NULL)
+        UNION
+        -- The children of the given term:
+        SELECT object AS parent, subject AS child
+        FROM statements
+        WHERE predicate = :pred
+          AND object = :term_id
+        UNION
+        --- Children of the children of the given term
+        SELECT object AS parent, subject AS child
+        FROM statements
+        WHERE object IN (SELECT subject FROM statements
+                         WHERE predicate = :pred AND object = :term_id)
+          AND predicate = :pred
+        UNION
+        -- The non-blank parents of all of the parent terms extracted so far:
+        SELECT object AS parent, subject AS child
+        FROM statements, ancestors
+        WHERE ancestors.parent = statements.stanza
+          AND statements.predicate = :pred
+          AND statements.object NOT LIKE '_:%%'
+      )
+      SELECT * FROM ancestors"""
+    )
+    results = conn.execute(query, term_id=parent_term, pred=pred).fetchall()
+    if include_parents:
+        return [[x["parent"], x["child"]] for x in results]
+    return [x["child"] for x in results]
+
+
+def get_entity_type(conn: Connection, term_id: str) -> str:
+    """Get the OWL entity type for a term."""
+    query = sql_text(
+        """SELECT object FROM statements WHERE stanza = :term_id
+        AND subject = :term_id AND predicate = 'rdf:type'"""
+    )
+    results = list(conn.execute(query, term_id=term_id))
+    if len(results) > 1:
+        for res in results:
+            if res["object"] in TOP_LEVELS:
+                return res["object"]
+        return "owl:Individual"
+    elif len(results) == 1:
+        entity_type = results[0]["object"]
+        if entity_type == "owl:NamedIndividual":
+            entity_type = "owl:Individual"
+        return entity_type
+    else:
+        entity_type = None
+        query = sql_text(
+            "SELECT predicate FROM statements WHERE stanza = :term_id AND subject = :term_id"
+        )
+        results = conn.execute(query, term_id=term_id)
+        preds = [row["predicate"] for row in results]
+        if "rdfs:subClassOf" in preds:
+            return "owl:Class"
+        elif "rdfs:subPropertyOf" in preds:
+            return "owl:AnnotationProperty"
+        if not entity_type:
+            query = sql_text("SELECT predicate FROM statements WHERE object = :term_id")
+            results = conn.execute(query, term_id=term_id)
+            preds = [row["predicate"] for row in results]
+            if "rdfs:subClassOf" in preds:
+                return "owl:Class"
+            elif "rdfs:subPropertyOf" in preds:
+                return "owl:AnnotationProperty"
+    return "owl:Class"
 
 
 def get_ids(conn: Connection, id_or_labels: list) -> list:
