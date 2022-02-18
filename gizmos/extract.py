@@ -8,8 +8,11 @@ from sqlalchemy.sql.expression import text as sql_text
 from .helpers import (
     add_labels,
     escape_qnames,
+    get_children,
     get_connection,
+    get_descendants,
     get_ids,
+    get_parents,
     get_terms,
     get_ttl,
     ttl_to_json,
@@ -167,6 +170,7 @@ def extract(
     imported_from_property: str = "IAO:0000412",
     intermediates: str = "all",
     no_hierarchy: bool = False,
+    statements: str = "statements",
 ) -> str:
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
@@ -180,14 +184,14 @@ def extract(
     clean(conn)
 
     # Create a temp labels table
-    add_labels(conn)
+    add_labels(conn, statements=statements)
 
     # First pass on terms, get all related entities
     ignore = []
     more_terms = set()
     for term_id, details in terms.items():
         # Confirm that this term exists
-        query = sql_text("SELECT * FROM statements WHERE stanza = :term_id LIMIT 1")
+        query = sql_text(f"SELECT * FROM {statements} WHERE stanza = :term_id LIMIT 1")
         res = conn.execute(query, term_id=term_id).fetchone()
         if not res:
             logging.warning(f"'{term_id}' does not exist in database")
@@ -206,28 +210,36 @@ def extract(
                     # Find first ancestor/s that is/are either:
                     # - in the set of input terms
                     # - a top level term (below owl:Thing)
-                    get_top_ancestors(conn, ancestors, term_id, top_terms=list(terms.keys()))
+                    get_top_ancestors(
+                        conn,
+                        ancestors,
+                        term_id,
+                        statements=statements,
+                        top_terms=list(terms.keys()),
+                    )
                 else:
                     # Otherwise get a set of ancestors, stopping at terms that are either:
                     # - in the set of input terms
                     # - a top level term (below owl:Thing)
-                    get_ancestors_capped(conn, set(terms.keys()), ancestors, term_id)
+                    get_ancestors_capped(
+                        conn, set(terms.keys()), ancestors, term_id, statements=statements
+                    )
                 more_terms.update(ancestors)
             elif r == "children":
                 # Just add the direct children
-                more_terms.update(get_children(conn, term_id))
+                more_terms.update(get_children(conn, term_id, statements=statements))
             elif r == "descendants":
                 if intermediates == "none":
                     # Find all bottom-level descendants (do not have children)
                     descendants = set()
-                    get_bottom_descendants(conn, descendants, term_id)
+                    get_bottom_descendants(conn, descendants, term_id, statements=statements)
                     more_terms.update(descendants)
                 else:
                     # Get a set of all descendants, including intermediates
-                    more_terms.update(get_descendants(conn, term_id))
+                    more_terms.update(get_descendants(conn, term_id, statements=statements))
             elif r == "parents":
                 # Just add the direct parents
-                more_terms.update(get_parents(conn, term_id))
+                more_terms.update(get_parents(conn, term_id, statements=statements))
             else:
                 # TODO: should this just warn and continue?
                 raise Exception(f"unknown 'Related' keyword for '{term_id}': " + r)
@@ -267,18 +279,18 @@ def extract(
         # Insert all predicates
         if str(conn.engine.url).startswith("sqlite"):
             conn.execute(
-                """INSERT OR IGNORE INTO tmp_predicates
-                SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN
-                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')"""
+                f"""INSERT OR IGNORE INTO tmp_predicates
+                 SELECT DISTINCT predicate
+                 FROM {statements} WHERE predicate NOT IN
+                   ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')"""
             )
         else:
             conn.execute(
-                """INSERT INTO tmp_predicates
-                SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN
-                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')
-                ON CONFLICT (predicate) DO NOTHING"""
+                f"""INSERT INTO tmp_predicates
+                 SELECT DISTINCT predicate
+                 FROM {statements} WHERE predicate NOT IN
+                   ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')
+                 ON CONFLICT (predicate) DO NOTHING"""
             )
 
     # Add subclass/subproperty/type relationships to terms table
@@ -297,7 +309,9 @@ def extract(
         # Check for the first ancestor we can find with all terms considered "top level"
         # In many cases, this is just the direct parent
         parents = set()
-        get_top_ancestors(conn, parents, term_id, top_terms=list(terms.keys()))
+        get_top_ancestors(
+            conn, parents, term_id, statements=statements, top_terms=list(terms.keys())
+        )
         parents = parents.intersection(set(terms.keys()))
         if parents:
             # Maintain these relationships in the import module
@@ -322,31 +336,35 @@ def extract(
 
     # Insert rdf:type declarations - only for OWL entities
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate = 'rdf:type'
-          AND object IN
-          ('owl:Class', 'owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty', 'owl:NamedIndividual')"""
+        f"""INSERT INTO tmp_extract
+         SELECT * FROM {statements}
+         WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+           AND predicate = 'rdf:type'
+           AND object IN
+           ('owl:Class',
+            'owl:AnnotationProperty',
+            'owl:DataProperty',
+            'owl:ObjectProperty',
+            'owl:NamedIndividual')"""
     )
 
     # Insert subproperty statements for any property types
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
-        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
-           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
-           AND subject NOT LIKE '_:%%')"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+         SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
+         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+           (SELECT subject FROM {statements} WHERE predicate = 'rdf:type'
+            AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
+            AND subject NOT LIKE '_:%%')"""
     )
 
     # Insert subclass statements for any class types
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
-        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
-           AND object = 'owl:Class' AND subject NOT LIKE '_:%%')"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+         SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
+         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+           (SELECT subject FROM {statements} WHERE predicate = 'rdf:type'
+            AND object = 'owl:Class' AND subject NOT LIKE '_:%%')"""
     )
 
     # Everything else is an instance
@@ -361,33 +379,31 @@ def extract(
 
     # Insert literal annotations
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT *
-        FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate IN (SELECT predicate FROM tmp_predicates)
-          AND value IS NOT NULL"""
+        f"""INSERT INTO tmp_extract
+            SELECT * FROM {statements}
+            WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND predicate IN (SELECT predicate FROM tmp_predicates)
+              AND value IS NOT NULL"""
     )
 
     # Insert logical relationships (object must be in set of input terms)
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate IN (SELECT predicate FROM tmp_predicates)
-          AND object IN (SELECT DISTINCT child FROM tmp_terms)"""
+        f"""INSERT INTO tmp_extract
+            SELECT * FROM {statements}
+            WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND predicate IN (SELECT predicate FROM tmp_predicates)
+              AND object IN (SELECT DISTINCT child FROM tmp_terms)"""
     )
 
     # Insert IRI annotations (object does not have to be in input terms)
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT s1.stanza, s1.subject, s1.predicate, s1.object
-        FROM statements s1
-        JOIN statements s2 ON s1.predicate = s2.subject
-        WHERE s1.subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
-          AND s2.object = 'owl:AnnotationProperty'
-          AND s1.object IS NOT NULL"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+            SELECT s1.stanza, s1.subject, s1.predicate, s1.object FROM {statements} s1
+            JOIN {statements} s2 ON s1.predicate = s2.subject
+            WHERE s1.subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
+              AND s2.object = 'owl:AnnotationProperty'
+              AND s1.object IS NOT NULL"""
     )
 
     # Finally, if imported_from IRI is included, add this to add terms
@@ -411,7 +427,9 @@ def extract(
     return ttl_to_json(conn, ttl)
 
 
-def get_ancestors_capped(conn: Connection, top_terms: set, ancestors: set, term_id: str):
+def get_ancestors_capped(
+    conn: Connection, top_terms: set, ancestors: set, term_id: str, statements: str = "statements"
+):
     """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
     or a top-level term is reached (below owl:Thing).
 
@@ -420,8 +438,8 @@ def get_ancestors_capped(conn: Connection, top_terms: set, ancestors: set, term_
     :param ancestors: set to collect ancestors in
     :param term_id: term ID to get the ancestors of"""
     query = sql_text(
-        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
-        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+        f"""SELECT DISTINCT object FROM {statements} WHERE stanza = :term_id
+            AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
     )
     results = conn.execute(query, term_id=term_id)
     ancestors.add(term_id)
@@ -430,10 +448,12 @@ def get_ancestors_capped(conn: Connection, top_terms: set, ancestors: set, term_
         if o == "owl:Thing" or (top_terms and o in top_terms):
             continue
         ancestors.add(o)
-        get_ancestors_capped(conn, top_terms, ancestors, o)
+        get_ancestors_capped(conn, top_terms, ancestors, o, statements=statements)
 
 
-def get_bottom_descendants(conn: Connection, descendants: set, term_id: str):
+def get_bottom_descendants(
+    conn: Connection, descendants: set, term_id: str, statements: str = "statements"
+):
     """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
     terms are those that are not ever used as the object of an rdfs:subClassOf statement.
 
@@ -442,45 +462,13 @@ def get_bottom_descendants(conn: Connection, descendants: set, term_id: str):
     :param term_id: term ID to get the bottom descendants of
     """
     query = sql_text(
-        """SELECT DISTINCT stanza FROM statements
-    WHERE object = :term_id AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
+        f"""SELECT DISTINCT stanza FROM {statements}
+            WHERE object = :term_id AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
     )
     results = conn.execute(query, term_id=term_id)
     descendants.add(term_id)
     for res in results:
-        get_bottom_descendants(conn, descendants, res["stanza"])
-
-
-def get_children(conn: Connection, term_id: str) -> set:
-    """Return a set of children for a given term ID."""
-    query = sql_text(
-        """SELECT DISTINCT stanza FROM statements
-        WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object = :term_id"""
-    )
-    results = conn.execute(query, term_id=term_id)
-    return set([x["stanza"] for x in results])
-
-
-def get_descendants(conn: Connection, term_id: str) -> set:
-    """Return a set of descendants for a given term ID."""
-    query = sql_text(
-        """WITH RECURSIVE descendants(node) AS (
-            VALUES (:term_id)
-            UNION
-             SELECT stanza AS node
-            FROM statements
-            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-              AND stanza = :term_id
-            UNION
-            SELECT stanza AS node
-            FROM statements, descendants
-            WHERE descendants.node = statements.object
-              AND statements.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
-        )
-        SELECT * FROM descendants"""
-    )
-    results = conn.execute(query, term_id=term_id)
-    return set([x[0] for x in results])
+        get_bottom_descendants(conn, descendants, res["stanza"], statements=statements)
 
 
 def get_import_terms(import_file: str, source: str = None) -> dict:
@@ -507,17 +495,13 @@ def get_import_terms(import_file: str, source: str = None) -> dict:
     return terms
 
 
-def get_parents(conn: Connection, term_id: str) -> set:
-    """Return a set of parents for a given term ID."""
-    query = sql_text(
-        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
-        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
-    )
-    results = conn.execute(query, term_id=term_id)
-    return set([x["object"] for x in results])
-
-
-def get_top_ancestors(conn: Connection, ancestors: set, term_id: str, top_terms: list = None):
+def get_top_ancestors(
+    conn: Connection,
+    ancestors: set,
+    term_id: str,
+    statements: str = "statements",
+    top_terms: list = None,
+):
     """Get the top-level ancestor or ancestors for a given term with no intermediates. The top-level
     terms are those with no rdfs:subClassOf statement, or direct children of owl:Thing. If top_terms
     is included, they may also be those terms in that list.
@@ -525,12 +509,13 @@ def get_top_ancestors(conn: Connection, ancestors: set, term_id: str, top_terms:
     :param conn: database connection
     :param ancestors: a set to add ancestors to
     :param term_id: term ID to get the top ancestor of
+    :param statements: name of the ontology statements table
     :param top_terms: a list of top-level terms to stop at
                       (if an ancestor is in this set, it will be added and recursion will stop)
     """
     query = sql_text(
-        """SELECT DISTINCT object FROM statements WHERE stanza = :term_id
-        AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+        f"""SELECT DISTINCT object FROM {statements} WHERE stanza = :term_id
+            AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
     )
     results = conn.execute(query, term_id=term_id)
     ancestors.add(term_id)
@@ -542,7 +527,7 @@ def get_top_ancestors(conn: Connection, ancestors: set, term_id: str, top_terms:
         if top_terms and o in top_terms:
             ancestors.add(o)
         else:
-            get_top_ancestors(conn, ancestors, o, top_terms=top_terms)
+            get_top_ancestors(conn, ancestors, o, statements=statements, top_terms=top_terms)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import text as sql_text
-from .helpers import get_children, get_connection, get_descendants, get_entity_type
+from .helpers import get_children, get_connection, get_descendants
 
 
 def main():
@@ -56,13 +56,14 @@ def search(
 
 def get_search_results(
     conn: Connection,
-    search_text: str,
-    parent: str = None,
-    direct: bool = False,
+    search_text: str = "",
     label: str = "rdfs:label",
-    short_label: str = None,
-    synonyms: list = None,
     limit: Optional[int] = 30,
+    other_annotations: list = None,
+    short_label: str = None,
+    statements: str = "statements",
+    synonyms: list = None,
+    terms: list = None,
 ) -> list:
     """Return a list containing search results. Each search result has:
     - id
@@ -74,28 +75,24 @@ def get_search_results(
 
     :param conn: database connection to query
     :param search_text: substring to match
-    :param parent: ID of parent term to restrict search results under
-    :param direct: if true, restrict search results to direct children of parent
+    :param terms: IDs of terms to restrict search results to
     :param label: property for label annotations
     :param short_label: property for short label annotations
     :param synonyms: list of properties for synonym annotations
-    :param limit: max number of search results to return"""
+    :param other_annotations:
+    :param limit: max number of search results to return
+    :param statements: name of the statements table (default: statements)"""
     names = defaultdict(dict)
-    if not search_text and not parent:
+    if not search_text and not terms:
         # Nothing to search, no results
         return []
 
     stanza_in = None
-    if parent:
-        entity_type = get_entity_type(conn, parent)
-        if direct:
-            termset = get_children(conn, parent, entity_type=entity_type)
-        else:
-            termset = get_descendants(conn, parent, entity_type=entity_type, include_parents=False)
-        stanza_in = " AND stanza IN (" + ", ".join([f"'{x}'" for x in termset]) + ")"
+    if terms:
+        stanza_in = " AND stanza IN (" + ", ".join([f"'{x}'" for x in terms]) + ")"
 
     # Get labels
-    query = """SELECT DISTINCT stanza, value FROM statements
+    query = f"""SELECT DISTINCT stanza, value FROM {statements}
     WHERE predicate = :label AND lower(value) LIKE :text"""
     if stanza_in:
         query += stanza_in
@@ -110,7 +107,7 @@ def get_search_results(
     # Get short labels
     if short_label:
         if short_label.lower() == "id":
-            query = "SELECT DISTINCT stanza FROM statements WHERE lower(stanza) LIKE :text"
+            query = f"SELECT DISTINCT stanza FROM {statements} WHERE lower(stanza) LIKE :text"
             if stanza_in:
                 query += stanza_in
             query = sql_text(query)
@@ -123,12 +120,14 @@ def get_search_results(
                     term_id = term_id[1:-1]
                 names[term_id]["short_label"] = term_id
         else:
-            query = """SELECT DISTINCT stanza, value FROM statements
+            query = f"""SELECT DISTINCT stanza, value FROM {statements}
             WHERE predicate = :short_label AND lower(value) LIKE :text"""
             if stanza_in:
                 query += stanza_in
             query = sql_text(query)
-            results = conn.execute(query, short_label=short_label, text=f"%%{search_text.lower()}%%")
+            results = conn.execute(
+                query, short_label=short_label, text=f"%%{search_text.lower()}%%"
+            )
             for res in results:
                 term_id = res["stanza"]
                 if term_id not in names:
@@ -138,7 +137,7 @@ def get_search_results(
     # Get synonyms
     if synonyms:
         for syn in synonyms:
-            query = """SELECT DISTINCT stanza, value FROM statements
+            query = f"""SELECT DISTINCT stanza, value FROM {statements}
             WHERE predicate = :syn AND lower(value) LIKE :text"""
             if stanza_in:
                 query += stanza_in
@@ -155,17 +154,44 @@ def get_search_results(
                 ts[value] = syn
                 names[term_id]["synonyms"] = ts
 
+    if other_annotations:
+        for oa in other_annotations:
+            query = f"""SELECT DISTINCT stanza, value FROM {statements}
+            WHERE predicate = :oa AND lower(value) LIKE :text"""
+            if stanza_in:
+                query += stanza_in
+            query = sql_text(query)
+            results = conn.execute(query, oa=oa, text=f"%%{search_text.lower()}%%")
+            for res in results:
+                term_id = res["stanza"]
+                value = res["value"]
+                if term_id not in names:
+                    names[term_id] = dict()
+                    ts = []
+                else:
+                    ts = names[term_id].get(oa, [])
+                ts.append(value)
+                names[term_id][oa] = ts
+
     search_res = {}
     term_to_match = {}
     for term_id, details in names.items():
-        term_label = details.get("label")
-        term_short_label = details.get("short_label")
-        term_synonyms = details.get("synonyms", {})
-
-        # Determine which property was the text that matched
         matched_property = None
         term_synonym = None
         matched_value = None
+
+        term_label = details.get("label")
+        term_short_label = details.get("short_label")
+        term_synonyms = details.get("synonyms", {})
+        if other_annotations:
+            for oa in other_annotations:
+                term_other = details.get(oa)
+                if term_other:
+                    matched_property = oa
+                    matched_value = term_other
+                    break
+
+        # Determine which property was the text that matched
         if term_label:
             matched_property = label
             matched_value = term_label
@@ -187,7 +213,7 @@ def get_search_results(
         # Add the other, missing property values
         if not term_label:
             # Label did not match text, retrieve it to display
-            query = """SELECT DISTINCT value FROM statements
+            query = f"""SELECT DISTINCT value FROM {statements}
             WHERE predicate = :label AND stanza = :term_id"""
             if stanza_in:
                 query += stanza_in
@@ -204,7 +230,7 @@ def get_search_results(
                 else:
                     term_short_label = term_id
             else:
-                query = """SELECT DISTINCT value FROM statements
+                query = f"""SELECT DISTINCT value FROM {statements}
                 WHERE predicate = :short_label AND stanza = :term_id"""
                 if stanza_in:
                     query += stanza_in
