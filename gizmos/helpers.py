@@ -20,7 +20,7 @@ TOP_LEVELS = {
 }
 
 
-def add_labels(conn: Connection):
+def add_labels(conn: Connection, statements="statements"):
     """Create a temporary labels table. If a term does not have a label, the label is the ID."""
     # Create a tmp labels table
     with conn.begin():
@@ -28,33 +28,34 @@ def add_labels(conn: Connection):
         if str(conn.engine.url).startswith("sqlite"):
             # Add all terms with label
             conn.execute(
-                """INSERT OR IGNORE INTO tmp_labels SELECT subject, value
-                   FROM statements WHERE predicate = 'rdfs:label'"""
+                f"""INSERT OR IGNORE INTO tmp_labels SELECT subject, value
+                    FROM {statements} WHERE predicate = 'rdfs:label'"""
             )
             # Update remaining with their ID as their label
             conn.execute(
-                "INSERT OR IGNORE INTO tmp_labels SELECT DISTINCT subject, subject FROM statements"
+                f"""INSERT OR IGNORE INTO tmp_labels
+                    SELECT DISTINCT subject, subject FROM {statements}"""
             )
             conn.execute(
-                """INSERT OR IGNORE INTO tmp_labels
-                   SELECT DISTINCT predicate, predicate FROM statements"""
+                f"""INSERT OR IGNORE INTO tmp_labels
+                    SELECT DISTINCT predicate, predicate FROM {statements}"""
             )
         else:
             # Do the same for a psycopg2 Cursor
             conn.execute(
-                """INSERT INTO tmp_labels
-                   SELECT subject, value FROM statements WHERE predicate = 'rdfs:label'
-                   ON CONFLICT (term) DO NOTHING"""
+                f"""INSERT INTO tmp_labels
+                    SELECT subject, value FROM {statements} WHERE predicate = 'rdfs:label'
+                    ON CONFLICT (term) DO NOTHING"""
             )
             conn.execute(
-                """INSERT INTO tmp_labels
-                   SELECT DISTINCT subject, subject FROM statements
-                   ON CONFLICT (term) DO NOTHING"""
+                f"""INSERT INTO tmp_labels
+                    SELECT DISTINCT subject, subject FROM {statements}
+                    ON CONFLICT (term) DO NOTHING"""
             )
             conn.execute(
-                """INSERT INTO tmp_labels
-                   SELECT DISTINCT predicate, predicate FROM statements
-                   ON CONFLICT (term) DO NOTHING"""
+                f"""INSERT INTO tmp_labels
+                    SELECT DISTINCT predicate, predicate FROM {statements}
+                    ON CONFLICT (term) DO NOTHING"""
             )
 
 
@@ -83,29 +84,27 @@ def escape_qnames(conn: Connection, table: str):
                 conn.execute(query, escaped=escaped, curie=curie)
 
 
-def get_children(conn: Connection, parent_term: str, entity_type: str = "owl:Class"):
-    pred = "rdfs:subPropertyOf"
-    if entity_type == "owl:Class":
-        pred = "rdfs:subClassOf"
+def get_children(conn: Connection, term_id: str, statements="statements"):
     query = sql_text(
-        "SELECT DISTINCT subject FROM statements WHERE predicate = :pred AND object = :parent"
+        f"""SELECT DISTINCT subject FROM {statements}
+            WHERE predicate IN ('rdfs:subClassOf', 'owl:subPropertyOf') AND object = :parent"""
     )
-    results = conn.execute(query, pred=pred, parent=parent_term)
-    if parent_term in TOP_LEVELS or parent_term == "owl:Thing":
+    results = conn.execute(query, parent=term_id)
+    if term_id in TOP_LEVELS or term_id == "owl:Thing":
         # also get terms with no parent
         query = sql_text(
-            """SELECT DISTINCT subject FROM statements 
+            f"""SELECT DISTINCT subject FROM {statements} 
             WHERE subject NOT IN 
-                (SELECT subject FROM statements
-                 WHERE predicate = :pred
+                (SELECT subject FROM {statements}
+                 WHERE predicate IN ('rdfs:subClassOf', 'owl:subPropertyOf')
                  AND object != 'owl:Thing')
             AND subject IN 
-                (SELECT subject FROM statements 
+                (SELECT subject FROM {statements} 
                  WHERE predicate = 'rdf:type'
                  AND object = :term_id AND subject NOT LIKE '_:%%'
                  AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
         )
-        results = conn.execute(query, pred=pred, term_id=parent_term)
+        results = conn.execute(query, term_id=term_id)
     return [x["subject"] for x in results]
 
 
@@ -157,47 +156,33 @@ def get_connection(path: str) -> Union[Connection, None]:
     return None
 
 
-def get_descendants(conn: Connection, parent_term: str, entity_type: str = "owl:Class", include_parents=True):
-    pred = "rdfs:subPropertyOf"
-    if entity_type == "owl:Class":
-        pred = "rdfs:subClassOf"
+def get_descendants(conn: Connection, term_id: str, statements: str = "statements") -> set:
+    """Return a set of descendants for a given term ID."""
     query = sql_text(
-        f"""WITH RECURSIVE ancestors(parent, child) AS (
-        VALUES (:term_id, NULL)
-        UNION
-        -- The children of the given term:
-        SELECT object AS parent, subject AS child
-        FROM statements
-        WHERE predicate = :pred
-          AND object = :term_id
-        UNION
-        --- Children of the children of the given term
-        SELECT object AS parent, subject AS child
-        FROM statements
-        WHERE object IN (SELECT subject FROM statements
-                         WHERE predicate = :pred AND object = :term_id)
-          AND predicate = :pred
-        UNION
-        -- The non-blank parents of all of the parent terms extracted so far:
-        SELECT object AS parent, subject AS child
-        FROM statements, ancestors
-        WHERE ancestors.parent = statements.stanza
-          AND statements.predicate = :pred
-          AND statements.object NOT LIKE '_:%%'
-      )
-      SELECT * FROM ancestors"""
+        f"""WITH RECURSIVE descendants(node) AS (
+            VALUES (:term_id)
+            UNION
+             SELECT stanza AS node
+            FROM {statements}
+            WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+              AND stanza = :term_id
+            UNION
+            SELECT stanza AS node
+            FROM {statements}, descendants
+            WHERE descendants.node = {statements}.object
+              AND {statements}.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+        )
+        SELECT * FROM descendants"""
     )
-    results = conn.execute(query, term_id=parent_term, pred=pred).fetchall()
-    if include_parents:
-        return [[x["parent"], x["child"]] for x in results]
-    return [x["child"] for x in results]
+    results = conn.execute(query, term_id=term_id)
+    return set([x[0] for x in results])
 
 
-def get_entity_type(conn: Connection, term_id: str) -> str:
+def get_entity_type(conn: Connection, term_id: str, statements="statements") -> str:
     """Get the OWL entity type for a term."""
     query = sql_text(
-        """SELECT object FROM statements WHERE stanza = :term_id
-        AND subject = :term_id AND predicate = 'rdf:type'"""
+        f"""SELECT object FROM {statements} WHERE stanza = :term_id
+            AND subject = :term_id AND predicate = 'rdf:type'"""
     )
     results = list(conn.execute(query, term_id=term_id))
     if len(results) > 1:
@@ -213,7 +198,7 @@ def get_entity_type(conn: Connection, term_id: str) -> str:
     else:
         entity_type = None
         query = sql_text(
-            "SELECT predicate FROM statements WHERE stanza = :term_id AND subject = :term_id"
+            f"SELECT predicate FROM {statements} WHERE stanza = :term_id AND subject = :term_id"
         )
         results = conn.execute(query, term_id=term_id)
         preds = [row["predicate"] for row in results]
@@ -222,7 +207,7 @@ def get_entity_type(conn: Connection, term_id: str) -> str:
         elif "rdfs:subPropertyOf" in preds:
             return "owl:AnnotationProperty"
         if not entity_type:
-            query = sql_text("SELECT predicate FROM statements WHERE object = :term_id")
+            query = sql_text(f"SELECT predicate FROM {statements} WHERE object = :term_id")
             results = conn.execute(query, term_id=term_id)
             preds = [row["predicate"] for row in results]
             if "rdfs:subClassOf" in preds:
@@ -249,6 +234,50 @@ def get_ids(conn: Connection, id_or_labels: list) -> list:
             else:
                 logging.warning(f" '{id_or_label}' does not exist in database")
     return ids
+
+
+def get_parent_child_pairs(
+    conn: Connection, term_id: str, statements="statements",
+):
+    query = sql_text(
+        f"""WITH RECURSIVE ancestors(parent, child) AS (
+        VALUES (:term_id, NULL)
+        UNION
+        -- The children of the given term:
+        SELECT object AS parent, subject AS child
+        FROM {statements}
+        WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+          AND object = :term_id
+        UNION
+        --- Children of the children of the given term
+        SELECT object AS parent, subject AS child
+        FROM {statements}
+        WHERE object IN (SELECT subject FROM {statements}
+                         WHERE predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+                         AND object = :term_id)
+          AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+        UNION
+        -- The non-blank parents of all of the parent terms extracted so far:
+        SELECT object AS parent, subject AS child
+        FROM {statements}, ancestors
+        WHERE ancestors.parent = {statements}.stanza
+          AND {statements}.predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')
+          AND {statements}.object NOT LIKE '_:%%'
+      )
+      SELECT * FROM ancestors"""
+    )
+    results = conn.execute(query, term_id=term_id).fetchall()
+    return [[x["parent"], x["child"]] for x in results]
+
+
+def get_parents(conn: Connection, term_id: str, statements: str = "statements") -> set:
+    """Return a set of parents for a given term ID."""
+    query = sql_text(
+        f"""SELECT DISTINCT object FROM {statements} WHERE stanza = :term_id
+            AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
+    )
+    results = conn.execute(query, term_id=term_id)
+    return set([x["object"] for x in results])
 
 
 def get_terms(term_list: list, terms_file: str) -> list:
