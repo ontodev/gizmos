@@ -1182,11 +1182,11 @@ def term2tree(
         if data[treename][oc]["children"]:
             o.append(PLUS)
         attrs = {}
-        if len(children) > max_children:
+        if len(children) >= max_children:
             attrs["style"] = "display: none"
         children.append(["li", attrs, o])
 
-    if len(children) > max_children:
+    if len(children) >= max_children:
         total = len(term_tree["children"])
         attrs = {"href": f"javascript:show_children()"}
         children.append(["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]])
