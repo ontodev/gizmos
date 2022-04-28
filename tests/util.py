@@ -17,7 +17,7 @@ sqlite_url = "sqlite:///" + os.path.abspath("build/obi.db")
 def dump_ttl_sorted(graph):
     for line in sorted(graph.serialize(format="ttl").splitlines()):
         if line:
-            print(line.decode("ascii"))
+            print(line)
 
 
 def compare_graphs(actual, expected):

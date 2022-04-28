@@ -205,14 +205,12 @@ def extract(
         related = related.strip().lower().split(" ")
         for r in related:
             if r == "ancestors":
-                ancestors = set()
                 if intermediates == "none":
                     # Find first ancestor/s that is/are either:
                     # - in the set of input terms
                     # - a top level term (below owl:Thing)
-                    get_top_ancestors(
+                    ancestors = get_top_ancestors(
                         conn,
-                        ancestors,
                         term_id,
                         statements=statements,
                         top_terms=list(terms.keys()),
@@ -221,8 +219,8 @@ def extract(
                     # Otherwise get a set of ancestors, stopping at terms that are either:
                     # - in the set of input terms
                     # - a top level term (below owl:Thing)
-                    get_ancestors_capped(
-                        conn, set(terms.keys()), ancestors, term_id, statements=statements
+                    ancestors = get_ancestors_capped(
+                        conn, set(terms.keys()), term_id, statements=statements
                     )
                 more_terms.update(ancestors)
             elif r == "children":
@@ -231,8 +229,7 @@ def extract(
             elif r == "descendants":
                 if intermediates == "none":
                     # Find all bottom-level descendants (do not have children)
-                    descendants = set()
-                    get_bottom_descendants(conn, descendants, term_id, statements=statements)
+                    descendants = get_bottom_descendants(conn, term_id, statements=statements)
                     more_terms.update(descendants)
                 else:
                     # Get a set of all descendants, including intermediates
@@ -308,9 +305,8 @@ def extract(
         # Otherwise only add the parent if we want a hierarchy
         # Check for the first ancestor we can find with all terms considered "top level"
         # In many cases, this is just the direct parent
-        parents = set()
-        get_top_ancestors(
-            conn, parents, term_id, statements=statements, top_terms=list(terms.keys())
+        parents = get_top_ancestors(
+            conn, term_id, statements=statements, top_terms=list(terms.keys())
         )
         parents = parents.intersection(set(terms.keys()))
         if parents:
@@ -428,7 +424,7 @@ def extract(
 
 
 def get_ancestors_capped(
-    conn: Connection, top_terms: set, ancestors: set, term_id: str, statements: str = "statements"
+    conn: Connection, top_terms: set, term_id: str, ancestors: set = None, statements: str = "statements"
 ):
     """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
     or a top-level term is reached (below owl:Thing).
@@ -437,6 +433,8 @@ def get_ancestors_capped(
     :param top_terms: set of top terms to stop at
     :param ancestors: set to collect ancestors in
     :param term_id: term ID to get the ancestors of"""
+    if not ancestors:
+        ancestors = set()
     query = sql_text(
         f"""SELECT DISTINCT object FROM {statements} WHERE stanza = :term_id
             AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
@@ -448,11 +446,14 @@ def get_ancestors_capped(
         if o == "owl:Thing" or (top_terms and o in top_terms):
             continue
         ancestors.add(o)
-        get_ancestors_capped(conn, top_terms, ancestors, o, statements=statements)
+        ancestors.update(
+            get_ancestors_capped(conn, top_terms, o, ancestors=ancestors, statements=statements)
+        )
+    return ancestors
 
 
 def get_bottom_descendants(
-    conn: Connection, descendants: set, term_id: str, statements: str = "statements"
+    conn: Connection, term_id: str, descendants: set = None, statements: str = "statements"
 ):
     """Get all bottom-level descendants for a given term with no intermediates. The bottom-level
     terms are those that are not ever used as the object of an rdfs:subClassOf statement.
@@ -461,14 +462,23 @@ def get_bottom_descendants(
     :param descendants: a set to add descendants to
     :param term_id: term ID to get the bottom descendants of
     """
+    if not descendants:
+        descendants = set()
     query = sql_text(
         f"""SELECT DISTINCT stanza FROM {statements}
             WHERE object = :term_id AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf')"""
     )
-    results = conn.execute(query, term_id=term_id)
-    descendants.add(term_id)
-    for res in results:
-        get_bottom_descendants(conn, descendants, res["stanza"], statements=statements)
+    results = list(conn.execute(query, term_id=term_id))
+    if results:
+        for res in results:
+            descendants.update(
+                get_bottom_descendants(
+                    conn, res["stanza"], descendants=descendants, statements=statements
+                )
+            )
+    else:
+        descendants.add(term_id)
+    return descendants
 
 
 def get_import_terms(import_file: str, source: str = None) -> dict:
@@ -497,8 +507,8 @@ def get_import_terms(import_file: str, source: str = None) -> dict:
 
 def get_top_ancestors(
     conn: Connection,
-    ancestors: set,
     term_id: str,
+    ancestors: set = None,
     statements: str = "statements",
     top_terms: list = None,
 ):
@@ -513,12 +523,14 @@ def get_top_ancestors(
     :param top_terms: a list of top-level terms to stop at
                       (if an ancestor is in this set, it will be added and recursion will stop)
     """
+    if not ancestors:
+        ancestors = set()
+
     query = sql_text(
         f"""SELECT DISTINCT object FROM {statements} WHERE stanza = :term_id
             AND predicate IN ('rdfs:subClassOf', 'rdfs:subPropertyOf') AND object NOT LIKE '_:%%'"""
     )
     results = conn.execute(query, term_id=term_id)
-    ancestors.add(term_id)
     for res in results:
         o = res["object"]
         if o == "owl:Thing":
@@ -527,7 +539,12 @@ def get_top_ancestors(
         if top_terms and o in top_terms:
             ancestors.add(o)
         else:
-            get_top_ancestors(conn, ancestors, o, statements=statements, top_terms=top_terms)
+            ancestors.update(
+                get_top_ancestors(
+                    conn, o, ancestors=ancestors, statements=statements, top_terms=top_terms
+                )
+            )
+    return ancestors
 
 
 if __name__ == "__main__":
