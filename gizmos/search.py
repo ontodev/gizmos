@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 from argparse import ArgumentParser
@@ -6,8 +7,9 @@ from collections import defaultdict
 from typing import Optional
 
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.sql.expression import text as sql_text
-from .helpers import get_children, get_connection, get_descendants
+from .helpers import get_connection, MAX_SQL_VARS
 
 
 def main():
@@ -261,6 +263,49 @@ def get_search_results(
         res.append(details)
         i += 1
     return res
+
+
+def simple_search(conn: Connection, search_text: str, limit=None, statements="statements", synonym="IAO:0000118", term_ids=None):
+    query = f"""WITH labels AS (
+                    SELECT DISTINCT subject, object
+                    FROM "{statements}" WHERE predicate = 'rdfs:label'
+                ),
+                synonyms AS (
+                    SELECT * FROM (
+                        SELECT DISTINCT subject, object FROM "{statements}"
+                        WHERE predicate = :synonym
+                    )
+                )
+                SELECT DISTINCT
+                    s.subject AS subject,
+                    COALESCE(l.object, "") || COALESCE(" - " || y.object, "") || " [" || s.subject || "]" AS label
+                FROM "{statements}" s
+                LEFT JOIN labels l ON t.subject = l.subject
+                LEFT JOIN synonyms y ON s.subject = y.subject
+                WHERE LOWER(label) LIKE :text"""
+    results = []
+    if term_ids:
+        query += " AND s.subject IN :term_ids ORDER BY LENGTH(label)"
+        if limit:
+            query += f" LIMIT {limit}"
+        query = sql_text(query).bindparams(bindparam("term_ids", expanding=True))
+        # Use chunks to get around max SQL variables
+        chunks = [term_ids[i: i + MAX_SQL_VARS] for i in range(0, len(term_ids), MAX_SQL_VARS)]
+        for chunk in chunks:
+            results.extend(
+                conn.execute(
+                    query, search_text=f"%%{search_text.lower()}%%", synonym=synonym, term_ids=chunk
+                ).fetchall()
+            )
+    else:
+        query += " ORDER BY LENGTH(label)"
+        if limit:
+            query += f" LIMIT {limit}"
+        results = conn.execute(sql_text(query), search_text=f"%%{search_text.lower()}%%", synonym=synonym).fetchall()
+    return [
+        {"id": res["subject"], "label": res["label"], "order": i}
+        for i, res in enumerate(results, 1)
+    ]
 
 
 if __name__ == "__main__":

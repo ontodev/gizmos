@@ -698,13 +698,7 @@ def build_nested(
                     for ar in ann_rows:
                         ax_os.append(["li", ["small", row2o([], data, ar)]])
                         build_nested(
-                            treename,
-                            data,
-                            spv2annotation,
-                            ar["subject"],
-                            ar,
-                            ax_os,
-                            href=href,
+                            treename, data, spv2annotation, ar["subject"], ar, ax_os, href=href,
                         )
                     ele.append(["ul", anchor, ["ul"] + ax_os])
     return ele
@@ -854,7 +848,9 @@ def get_ontology(conn: Connection, prefixes: list, statements: str = "statements
     return iri, res["value"]
 
 
-def get_labels(conn, curies, include_top=True, ontology_iri=None, ontology_title=None, statements="statements"):
+def get_labels(
+    conn, curies, include_top=True, ontology_iri=None, ontology_title=None, statements="statements"
+):
     labels = {}
     query = sql_text(
         f"""SELECT subject, value FROM {statements}
@@ -979,7 +975,13 @@ def term2rdfa(
 
     # Get all of the rdfs:labels corresponding to all of the compact URIs, in the form of a map
     # from compact URIs to labels:
-    labels = get_labels(conn, curies, ontology_iri=ontology_iri, ontology_title=ontology_title, statements=statements)
+    labels = get_labels(
+        conn,
+        curies,
+        ontology_iri=ontology_iri,
+        ontology_title=ontology_title,
+        statements=statements,
+    )
 
     obsolete = []
     query = sql_text(

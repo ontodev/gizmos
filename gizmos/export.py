@@ -1,6 +1,5 @@
 import csv
 import io
-import logging
 import re
 import sys
 
@@ -10,7 +9,7 @@ from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.sql.expression import text as sql_text
 
-from .helpers import add_labels, get_connection, get_ids, get_terms
+from .helpers import get_connection, get_ids, get_terms
 from .hiccup import render
 
 """
@@ -82,21 +81,17 @@ def run_export(args: Namespace) -> str:
     terms = get_terms(args.term, args.terms)
     predicates = get_terms(args.predicate, args.predicates)
     conn = get_connection(args.database)
-    try:
-        return export(
-            conn,
-            terms,
-            predicates,
-            args.format,
-            default_value_format=args.values,
-            standalone=not args.contents_only,
-            split=args.split,
-            no_headers=args.no_headers,
-            where=args.where,
-        )
-    finally:
-        # Post clean-up
-        conn.execute("DROP TABLE IF EXISTS tmp_labels")
+    return export(
+        conn,
+        terms,
+        predicates,
+        args.format,
+        default_value_format=args.values,
+        standalone=not args.contents_only,
+        split=args.split,
+        no_headers=args.no_headers,
+        where=args.where,
+    )
 
 
 def get_html_value(value_format: str, predicate_id: str, vo: dict) -> list:
@@ -133,44 +128,56 @@ def get_iri(prefixes: dict, term: str) -> str:
 
 
 def get_objects(
-    conn: Connection, prefixes: dict, term: str, predicate_ids: dict, statements: str = "statements"
+    conn: Connection, prefixes: dict, term_ids: list, predicate_ids: dict, statements: str = "statements"
 ) -> dict:
     """Get a dict of predicate label -> objects. The object will either be the term ID or label,
     when the label exists."""
     predicates = [x for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
-    term_objects = defaultdict(list)
+    term_objects = defaultdict(dict)
     query = sql_text(
-        f"""SELECT DISTINCT predicate, s.object AS object, l.label AS object_label
-            FROM {statements} s JOIN tmp_labels l ON s.object = l.term
-            WHERE s.subject = :term AND s.predicate IN :predicates"""
-    ).bindparams(bindparam("predicates", expanding=True), bindparam("term"))
-    results = conn.execute(query, {"term": term, "predicates": predicates})
+        f"""SELECT DISTINCT subject, predicate, object
+        FROM "{statements}" WHERE subject IN :terms
+            AND predicate IN :predicates
+            AND object NOT LIKE '_:%'"""
+    ).bindparams(bindparam("predicates", expanding=True), bindparam("terms", expanding=True))
+    results = conn.execute(query, terms=term_ids, predicates=predicates).fetchall()
+    # Get the labels for any objects
+    objects = [res["object"] for res in results]
+    query = sql_text(
+        f"""SELECT DISTINCT subject, value FROM "{statements}"
+        WHERE subject IN :terms AND predicate = 'rdfs:label'"""
+    ).bindparams(bindparam("terms", expanding=True))
+    object_labels = {res["subject"]: res["value"] for res in conn.execute(query, terms=objects).fetchall()}
     for res in results:
+        s = res["subject"]
+        if s not in term_objects:
+            term_objects[s] = defaultdict(list)
         p = res["predicate"]
-        p_label = predicate_ids[p]
-        if p_label not in term_objects:
-            term_objects[p_label] = list()
+        p_label = predicate_ids[p] or p
+        if p_label not in term_objects[s]:
+            term_objects[s][p_label] = list()
 
         obj = res["object"]
-        if obj.startswith("_:"):
-            # TODO - handle blank nodes
-            continue
-        obj_label = res["object_label"]
+        obj_label = object_labels.get(obj, obj)
 
-        d = {"id": obj, "iri": get_iri(prefixes, term)}
+        d = {"id": obj}
+        if prefixes:
+            d["iri"] = get_iri(prefixes, s)
         # Maybe add the label
-        if obj != obj_label:
+        if obj_label:
             d["label"] = obj_label
-        term_objects[p_label].append(d)
+        term_objects[s][p_label].append(d)
     return term_objects
 
 
 def get_predicate_ids(
     conn: Connection, id_or_labels: list = None, statements: str = "statements"
 ) -> dict:
-    """Create a map of predicate label or full header (if the header has a value format) -> ID."""
+    """"""
     predicate_ids = {}
     if id_or_labels:
+        # Subset of predicates was specified, just get the ID -> label map for these
+        id_or_labels_trimmed = []
         for id_or_label in id_or_labels:
             m = re.match(r"(.+) \[.+]$", id_or_label)
             if m:
@@ -178,26 +185,26 @@ def get_predicate_ids(
             if id_or_label in ["CURIE", "IRI", "label"]:
                 predicate_ids[id_or_label] = id_or_label
                 continue
-            query = sql_text("SELECT term FROM tmp_labels WHERE label = :id_or_label")
-            res = conn.execute(query, id_or_label=id_or_label).fetchone()
-            if res:
-                predicate_ids[res["term"]] = id_or_label
-            else:
-                # Make sure this exists as an ID
-                query = sql_text("SELECT label FROM tmp_labels WHERE term = :id_or_label")
-                res = conn.execute(query, id_or_label=id_or_label).fetchone()
-                if res:
-                    predicate_ids[id_or_label] = id_or_label
-                else:
-                    logging.warning(f"'{id_or_label}' does not exist in database")
+            id_or_labels_trimmed.append(id_or_label)
+        predicate_ids.update(
+            get_ids(conn, id_or_labels_trimmed, statements=statements, id_type="predicate")
+        )
         return predicate_ids
 
+    # Otherwise, get all predicate IDs -> labels
     results = conn.execute(
-        f"""SELECT DISTINCT s.predicate AS term, l.label AS label
-            FROM {statements} s JOIN tmp_labels l ON s.predicate = l.term"""
-    )
+        f"""WITH labels AS (
+                SELECT DISTINCT subject, value
+                FROM statements WHERE predicate = 'rdfs:label'
+            )
+            SELECT DISTINCT
+                s.predicate AS subject,
+                l.value AS value
+            FROM "{statements}" s
+            LEFT JOIN labels l ON s.predicate = l.subject;"""
+    ).fetchall()
     for res in results:
-        predicate_ids[res["term"]] = res["label"]
+        predicate_ids[res["subject"]] = res["value"]
     if "rdf:type" in predicate_ids:
         del predicate_ids["rdf:type"]
     return predicate_ids
@@ -218,59 +225,59 @@ def get_string_value(value_format: str, vo: dict) -> str:
 
 
 def get_term_details(
-    conn: Connection, prefixes: dict, term: str, predicate_ids: dict, statements: str = "statements"
+    conn: Connection, term_ids: list, predicate_ids: dict, prefixes: dict = None, statements: str = "statements"
 ) -> dict:
     """Get a dict of predicate label -> object or value."""
     term_details = {}
 
-    # Handle special cases
-    base_dict = {"id": term, "iri": get_iri(prefixes, term)}
-    query = sql_text("SELECT label FROM tmp_labels WHERE term = :term")
-    res = conn.execute(query, term=term).fetchone()
-    if res:
-        base_dict["label"] = res["label"]
-    if "CURIE" in predicate_ids:
-        term_details["CURIE"] = base_dict
-    if "IRI" in predicate_ids:
-        term_details["IRI"] = base_dict
-    if "label" in predicate_ids:
-        term_details["label"] = base_dict
-
     # Get all details
-    term_details.update(get_values(conn, term, predicate_ids, statements=statements))
-    term_details.update(get_objects(conn, prefixes, term, predicate_ids, statements=statements))
+    term_details.update(get_values(conn, term_ids, predicate_ids, statements=statements))
+    term_details.update(get_objects(conn, prefixes, term_ids, predicate_ids, statements=statements))
 
-    # TODO - maybe remove this block
-    """# Format predicates with multiple values - a single value should not be an array
-    term_details_fixed = {}
-    for predicate, values in term_details.items():
-        if len(values) == 1:
-            term_details_fixed[predicate] = values[0]
-        else:
-            term_details_fixed[predicate] = values
-    return term_details_fixed"""
+    for t in term_ids:
+        # Handle special cases
+        base_dict = {"id": t}
+        if prefixes:
+            base_dict["iri"] = get_iri(prefixes, t)
+        query = sql_text(
+            f"SELECT value FROM \"{statements}\" WHERE subject = :term AND predicate = 'rdfs:label'"
+        )
+        res = conn.execute(query, term=t).fetchone()
+        if res:
+            base_dict["label"] = res["value"]
+        if t not in term_details:
+            term_details[t] = defaultdict(dict)
+        if "CURIE" in predicate_ids:
+            term_details[t]["CURIE"] = base_dict
+        if "IRI" in predicate_ids:
+            term_details[t]["IRI"] = base_dict
+        if "label" in predicate_ids:
+            term_details[t]["label"] = base_dict
     return term_details
 
 
 def get_values(
-    conn: Connection, term: str, predicate_ids: dict, statements: str = "statements"
+    conn: Connection, term_ids: list, predicate_ids: dict, statements: str = "statements"
 ) -> dict:
     """Get a dict of predicate label -> literal values."""
     predicates = [x for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
-    term_values = defaultdict(list)
+    term_values = defaultdict(dict)
     query = sql_text(
-        f"""SELECT DISTINCT predicate, value FROM {statements} s
-            WHERE subject = :term AND predicate IN :predicates AND value IS NOT NULL"""
-    ).bindparams(bindparam("predicates", expanding=True), bindparam("term"))
-    result = conn.execute(query, {"term": term, "predicates": predicates})
+        f"""SELECT DISTINCT subject, predicate, value, datatype, language FROM {statements} s
+            WHERE subject IN :terms AND predicate IN :predicates AND value IS NOT NULL"""
+    ).bindparams(bindparam("predicates", expanding=True), bindparam("terms", expanding=True))
+    result = conn.execute(query, terms=term_ids, predicates=predicates)
     for res in result:
+        s = res["subject"]
+        if s not in term_values:
+            term_values[s] = defaultdict(list)
         p = res["predicate"]
-        p_label = predicate_ids[p]
+        p_label = predicate_ids[p] or p
         value = res["value"]
         if value:
-            if p_label not in term_values:
-                term_values[p_label] = list()
-            term_values[p_label].append({"value": value})
+            if p_label not in term_values[s]:
+                term_values[s][p_label] = list()
+            term_values[s][p_label].append({"value": value, "datatype": res["datatype"], "language": res["language"]})
     return term_values
 
 
@@ -473,10 +480,6 @@ def export(
 
     details = {}
 
-    # Create a tmp labels table & add all labels
-    conn.execute("DROP TABLE IF EXISTS tmp_labels")
-    add_labels(conn, statements=statements)
-
     if terms:
         term_ids = get_ids(conn, terms)
     else:
@@ -493,13 +496,14 @@ def export(
     if not predicates:
         # Get all predicates if not provided
         predicate_ids = {default_value_format: default_value_format}
-        value_formats = {default_value_format: default_value_format.lower()}
-        predicate_ids.update(get_predicate_ids(conn, statements=statements))
-        query = sql_text(
-            "SELECT DISTINCT label FROM tmp_labels WHERE term IN :predicates"
-        ).bindparams(bindparam("predicates", expanding=True))
-        for res in conn.execute(query, {"predicates": list(predicate_ids.keys())}):
-            value_formats[res["label"]] = default_value_format.lower()
+        predicate_ids.update(
+            {
+                pid: label or pid
+                for pid, label in get_predicate_ids(conn, statements=statements).items()
+            }
+        )
+        value_formats = {label: default_value_format.lower() for label in predicate_ids.values()}
+        value_formats[default_value_format] = default_value_format.lower()
 
     else:
         # Current predicates are IDs or labels - make sure we get all the IDs
@@ -521,9 +525,7 @@ def export(
         prefixes[row["prefix"]] = row["base"]
 
     # Get the term details
-    for term in term_ids:
-        term_details = get_term_details(conn, prefixes, term, predicate_ids, statements=statements)
-        details[term] = term_details
+    details = get_term_details(conn, term_ids, predicate_ids, prefixes=prefixes, statements=statements)
 
     return render_output(
         prefixes,

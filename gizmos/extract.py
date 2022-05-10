@@ -6,7 +6,6 @@ from argparse import ArgumentParser, Namespace
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import text as sql_text
 from .helpers import (
-    add_labels,
     escape_qnames,
     get_children,
     get_connection,
@@ -155,7 +154,6 @@ def run_extract(args: Namespace) -> str:
 
 def clean(conn: Connection):
     with conn.begin():
-        conn.execute("DROP TABLE IF EXISTS tmp_labels")
         conn.execute("DROP TABLE IF EXISTS tmp_terms")
         conn.execute("DROP TABLE IF EXISTS tmp_predicates")
         conn.execute("DROP TABLE IF EXISTS tmp_extract")
@@ -183,9 +181,6 @@ def extract(
     # Pre-clean up
     clean(conn)
 
-    # Create a temp labels table
-    add_labels(conn, statements=statements)
-
     # First pass on terms, get all related entities
     ignore = []
     more_terms = set()
@@ -210,10 +205,7 @@ def extract(
                     # - in the set of input terms
                     # - a top level term (below owl:Thing)
                     ancestors = get_top_ancestors(
-                        conn,
-                        term_id,
-                        statements=statements,
-                        top_terms=list(terms.keys()),
+                        conn, term_id, statements=statements, top_terms=list(terms.keys()),
                     )
                 else:
                     # Otherwise get a set of ancestors, stopping at terms that are either:
@@ -251,7 +243,7 @@ def extract(
     predicate_ids = None
     if predicates:
         # Current predicates are IDs or labels - make sure we get all the IDs
-        predicate_ids = get_ids(conn, predicates)
+        predicate_ids = get_ids(conn, predicates, id_type="predicate")
 
     # Create the terms table containing parent -> child relationships
     conn.execute("CREATE TABLE tmp_terms(child TEXT, parent TEXT)")
@@ -424,7 +416,11 @@ def extract(
 
 
 def get_ancestors_capped(
-    conn: Connection, top_terms: set, term_id: str, ancestors: set = None, statements: str = "statements"
+    conn: Connection,
+    top_terms: set,
+    term_id: str,
+    ancestors: set = None,
+    statements: str = "statements",
 ):
     """Return a set of ancestors for a given term ID, until a term in the top_terms is reached,
     or a top-level term is reached (below owl:Thing).

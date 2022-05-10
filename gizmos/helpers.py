@@ -6,9 +6,11 @@ from configparser import ConfigParser
 from rdflib import Graph
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Connection
+from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.sql.expression import text as sql_text
 from typing import Union
 
+MAX_SQL_VARS = os.environ.get("MAX_SQL_VARS") or 999
 TOP_LEVELS = {
     "ontology": "Ontology",
     "owl:Class": "Class",
@@ -18,45 +20,6 @@ TOP_LEVELS = {
     "owl:Individual": "Individual",
     "rdfs:Datatype": "Datatype",
 }
-
-
-def add_labels(conn: Connection, statements="statements"):
-    """Create a temporary labels table. If a term does not have a label, the label is the ID."""
-    # Create a tmp labels table
-    with conn.begin():
-        conn.execute("CREATE TABLE tmp_labels(term TEXT PRIMARY KEY, label TEXT)")
-        if str(conn.engine.url).startswith("sqlite"):
-            # Add all terms with label
-            conn.execute(
-                f"""INSERT OR IGNORE INTO tmp_labels SELECT subject, value
-                    FROM {statements} WHERE predicate = 'rdfs:label'"""
-            )
-            # Update remaining with their ID as their label
-            conn.execute(
-                f"""INSERT OR IGNORE INTO tmp_labels
-                    SELECT DISTINCT subject, subject FROM {statements}"""
-            )
-            conn.execute(
-                f"""INSERT OR IGNORE INTO tmp_labels
-                    SELECT DISTINCT predicate, predicate FROM {statements}"""
-            )
-        else:
-            # Do the same for a psycopg2 Cursor
-            conn.execute(
-                f"""INSERT INTO tmp_labels
-                    SELECT subject, value FROM {statements} WHERE predicate = 'rdfs:label'
-                    ON CONFLICT (term) DO NOTHING"""
-            )
-            conn.execute(
-                f"""INSERT INTO tmp_labels
-                    SELECT DISTINCT subject, subject FROM {statements}
-                    ON CONFLICT (term) DO NOTHING"""
-            )
-            conn.execute(
-                f"""INSERT INTO tmp_labels
-                    SELECT DISTINCT predicate, predicate FROM {statements}
-                    ON CONFLICT (term) DO NOTHING"""
-            )
 
 
 def escape(curie) -> str:
@@ -217,23 +180,50 @@ def get_entity_type(conn: Connection, term_id: str, statements="statements") -> 
     return "owl:Class"
 
 
-def get_ids(conn: Connection, id_or_labels: list) -> list:
-    """Create a list of IDs from a list of IDs or labels."""
-    ids = []
-    for id_or_label in id_or_labels:
-        query = sql_text("SELECT term FROM tmp_labels WHERE label = :id_or_label")
-        res = conn.execute(query, id_or_label=id_or_label).fetchone()
-        if res:
-            ids.append(res["term"])
-        else:
-            # Make sure this exists as an ID
-            query = sql_text("SELECT label FROM tmp_labels WHERE term = :id_or_label")
-            res = conn.execute(query, id_or_label=id_or_label).fetchone()
-            if res:
-                ids.append(id_or_label)
-            else:
-                logging.warning(f" '{id_or_label}' does not exist in database")
-    return ids
+def get_ids(
+    conn: Connection, id_or_labels: list = None, id_type="subject", statements="statements"
+) -> dict:
+    """Get a list of IDs from a list of IDs or labels.
+
+    :param conn: SQL database connection
+    :param id_or_labels: list of ID or labels as strings
+    :param id_type: the column to use as the target of the query (subject, predicate, or object)
+                    based on the type being retrieved.
+    :param statements: name of RDFTab statements table"""
+    query = f'SELECT DISTINCT {id_type} FROM "{statements}"'
+    term_labels = {}
+    if id_or_labels:
+        # Search for the given IDs
+        query += f" WHERE {id_type} IN :id_or_labels"
+        query = sql_text(query).bindparams(bindparam("id_or_labels", expanding=True))
+        term_ids = [res[id_type] for res in conn.execute(query, id_or_labels=id_or_labels).fetchall()]
+        # Remove found matches from the input set - any remaining were passed as labels
+        id_or_labels = list(set(id_or_labels) - set(term_ids))
+        if id_or_labels:
+            # Get the IDs for terms passed as labels
+            query = sql_text(
+                f"""SELECT DISTINCT subject, value FROM "{statements}"
+                WHERE predicate = 'rdfs:label' AND value IN :id_or_labels"""
+            ).bindparams(bindparam("id_or_labels", expanding=True))
+            term_labels = {res["subject"]: res["value"] for res in conn.execute(query, id_or_labels=id_or_labels).fetchall()}
+            id_or_labels = list(set(id_or_labels) - set(term_labels.values()))
+            if id_or_labels:
+                # Some terms could not be found
+                logging.warning(f"{len(id_or_labels)} terms do not exist in '{statements}': " + ", ".join(id_or_labels))
+    else:
+        # Get all terms of given id_type from table
+        term_ids = [res[id_type] for res in conn.execute(sql_text(query)).fetchall()]
+    if term_ids:
+        # Get the labels of any terms passed as CURIEs
+        query = sql_text(
+            f"""SELECT DISTINCT subject, value FROM "{statements}"
+            WHERE predicate = 'rdfs:label' AND subject IN :terms"""
+        ).bindparams(bindparam("terms", expanding=True))
+        term_labels.update({res["subject"]: res["value"] for res in conn.execute(query, terms=term_ids)})
+        # Add the 'label' for remaining IDs - just the CURIE
+        rem_ids = list(set(term_ids) - set(term_labels.keys()))
+        term_labels.update({x: x for x in rem_ids})
+    return term_labels
 
 
 def get_parent_child_pairs(
