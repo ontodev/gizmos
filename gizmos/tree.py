@@ -12,7 +12,7 @@ from gizmos.hiccup import render
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.sql.expression import text as sql_text
-from .helpers import get_connection
+from .helpers import get_connection, get_parent_child_pairs, get_entity_type, TOP_LEVELS
 
 """
 Usage: python3 tree.py <sqlite-database> <term-curie> > <html-file>
@@ -52,17 +52,6 @@ PLUS = [
     ],
 ]
 
-# Top levels to display in tree
-TOP_LEVELS = {
-    "ontology": "Ontology",
-    "owl:Class": "Class",
-    "owl:AnnotationProperty": "Annotation Property",
-    "owl:DataProperty": "Data Property",
-    "owl:ObjectProperty": "Object Property",
-    "owl:Individual": "Individual",
-    "rdfs:Datatype": "Datatype",
-}
-
 # Stylesheets & JS scripts
 bootstrap_css = "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css"
 bootstrap_js = "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
@@ -92,6 +81,13 @@ def main():
         "--contents-only",
         action="store_true",
         help="If provided, render HTML without the roots",
+    )
+    p.add_argument(
+        "-m",
+        "--max-children",
+        help="Max number of nodes to display under parent term",
+        type=int,
+        default=100,
     )
     args = p.parse_args()
 
@@ -124,6 +120,7 @@ def main():
             predicate_ids=predicate_ids,
             include_search=args.include_search,
             standalone=not args.contents_only,
+            max_children=args.max_children,
         )
     )
 
@@ -137,6 +134,8 @@ def tree(
     predicate_ids: list = None,
     include_search: bool = False,
     standalone: bool = True,
+    max_children: int = 100,
+    statements: str = "statements",
 ) -> str:
     """Create an HTML/RDFa tree for the given term.
     If term_id is None, create the tree for owl:Class."""
@@ -147,7 +146,18 @@ def tree(
     ps = set()
     body = []
     if not term_id:
-        p, t = term2rdfa(conn, all_prefixes, treename, [], "owl:Class", [], title=title, href=href)
+        p, t = term2rdfa(
+            conn,
+            all_prefixes,
+            treename,
+            [],
+            "owl:Class",
+            [],
+            title=title,
+            href=href,
+            max_children=max_children,
+            statements=statements,
+        )
         ps.update(p)
         body.append(t)
 
@@ -172,18 +182,20 @@ def tree(
         if predicate_ids and predicate_ids_split:
             # If some IDs were provided with *, add the remaining predicates
             # These properties go in between the before & after defined in the split
-            rem_predicate_ids = get_sorted_predicates(conn, exclude_ids=predicate_ids)
+            rem_predicate_ids = get_sorted_predicates(
+                conn, exclude_ids=predicate_ids, statements=statements
+            )
 
             # Separate before & after with the remaining properties
             predicate_ids = predicate_ids_split[0]
             predicate_ids.extend(rem_predicate_ids)
             predicate_ids.extend(predicate_ids_split[1])
         elif not predicate_ids:
-            predicate_ids = get_sorted_predicates(conn)
+            predicate_ids = get_sorted_predicates(conn, statements=statements)
 
         query = sql_text(
-            """SELECT stanza, subject, predicate, object, value, datatype, language
-            FROM statements WHERE stanza = :term_id"""
+            f"""SELECT stanza, subject, predicate, object, value, datatype, language
+                FROM {statements} WHERE stanza = :term_id"""
         )
         results = conn.execute(query, term_id=term_id)
         stanza = []
@@ -191,7 +203,16 @@ def tree(
             stanza.append(dict(res))
 
         p, t = term2rdfa(
-            conn, all_prefixes, treename, predicate_ids, term_id, stanza, title=title, href=href
+            conn,
+            all_prefixes,
+            treename,
+            predicate_ids,
+            term_id,
+            stanza,
+            title=title,
+            href=href,
+            max_children=max_children,
+            statements=statements,
         )
         ps.update(p)
         body.append(t)
@@ -228,145 +249,145 @@ def tree(
     body = body_wrapper + body
 
     # JQuery
-    body.append(
-        [
-            "script",
-            {
-                "src": "https://code.jquery.com/jquery-3.5.1.min.js",
-                "integrity": "sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0=",
-                "crossorigin": "anonymous",
-            },
-        ]
-    )
-
-    if include_search:
-        # Add JS imports for running search
-        body.append(["script", {"type": "text/javascript", "src": popper_js}])
-        body.append(["script", {"type": "text/javascript", "src": bootstrap_js}])
-        body.append(["script", {"type": "text/javascript", "src": typeahead_js}])
-
-    # Custom JS for show more children
-    js = """function show_children() {
-            hidden = $('#children li:hidden').slice(0, 100);
-            if (hidden.length > 1) {
-                hidden.show();
-                setTimeout(show_children, 100);
-            } else {
-                console.log("DONE");
-            }
-            $('#more').hide();
-        }"""
-
-    # Custom JS for search bar using Typeahead
-    if include_search:
-        # Built the href to return when you select a term
-        href_split = href.split("{curie}")
-        before = href_split[0].format(db=treename)
-        after = href_split[1].format(db=treename)
-        js_funct = f'str.push("{before}" + encodeURIComponent(obj[p]) + "{after}");'
-
-        # Build the href to return names JSON
-        remote = "'?text=%QUERY&format=json'"
-        if "db=" in href:
-            # Add tree name to query params
-            remote = f"'?db={treename}&text=%QUERY&format=json'"
-        js += (
-            """
-    $('#search-form').submit(function () {
-        $(this)
-            .find('input[name]')
-            .filter(function () {
-                return !this.value;
-            })
-            .prop('name', '');
-    });
-    function jump(currentPage) {
-      newPage = prompt("Jump to page", currentPage);
-      if (newPage) {
-        href = window.location.href.replace("page="+currentPage, "page="+newPage);
-        window.location.href = href;
-      }
-    }
-    function configure_typeahead(node) {
-      if (!node.id || !node.id.endsWith("-typeahead")) {
-        return;
-      }
-      table = node.id.replace("-typeahead", "");
-      var bloodhound = new Bloodhound({
-        datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
-        queryTokenizer: Bloodhound.tokenizers.nonword,
-        sorter: function(a, b) {
-          return a.order - b.order;
-        },
-        remote: {
-          url: """
-            + remote
-            + """,
-          wildcard: '%QUERY',
-          transform : function(response) {
-              return bloodhound.sorter(response);
-          }
-        }
-      });
-      $(node).typeahead({
-        minLength: 0,
-        hint: false,
-        highlight: true
-      }, {
-        name: table,
-        source: bloodhound,
-        display: function(item) {
-          if (item.label && item.short_label && item.synonym) {
-            return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
-          } else if (item.label && item.short_label) {
-            return item.short_label + ' - ' + item.label;
-          } else if (item.label && item.synonym) {
-            return item.label + ' - ' + item.synonym;
-          } else if (item.short_label && item.synonym) {
-            return item.short_label + ' - ' + item.synonym;
-          } else if (item.short_label && !item.label) {
-            return item.short_label;
-          } else {
-            return item.label;
-          }
-        },
-        limit: 40
-      });
-      $(node).bind('click', function(e) {
-        $(node).select();
-      });
-      $(node).bind('typeahead:select', function(ev, suggestion) {
-        $(node).prev().val(suggestion.id);
-        go(table, suggestion.id);
-      });
-      $(node).bind('keypress',function(e) {
-        if(e.which == 13) {
-          go(table, $('#' + table + '-hidden').val());
-        }
-      });
-    }
-    $('.typeahead').each(function() { configure_typeahead(this); });
-    function go(table, value) {
-      q = {}
-      table = table.replace('_all', '');
-      q[table] = value
-      window.location = query(q);
-    }
-    function query(obj) {
-      var str = [];
-      for (var p in obj)
-        if (obj.hasOwnProperty(p)) {
-          """
-            + js_funct
-            + """
-        }
-      return str.join("&");
-    }"""
+    if standalone:
+        body.append(
+            [
+                "script",
+                {
+                    "src": "https://code.jquery.com/jquery-3.5.1.min.js",
+                    "integrity": "sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0=",
+                    "crossorigin": "anonymous",
+                },
+            ]
         )
 
-    body.append(["script", {"type": "text/javascript"}, js])
+        if include_search:
+            # Add JS imports for running search
+            body.append(["script", {"type": "text/javascript", "src": popper_js}])
+            body.append(["script", {"type": "text/javascript", "src": bootstrap_js}])
+            body.append(["script", {"type": "text/javascript", "src": typeahead_js}])
 
-    if standalone:
+        # Custom JS for show more children
+        js = """function show_children() {
+                hidden = $('#children li:hidden').slice(0, 100);
+                if (hidden.length > 1) {
+                    hidden.show();
+                    setTimeout(show_children, 100);
+                } else {
+                    console.log("DONE");
+                }
+                $('#more').hide();
+            }"""
+
+        # Custom JS for search bar using Typeahead
+        if include_search:
+            # Built the href to return when you select a term
+            href_split = href.split("{curie}")
+            before = href_split[0].format(db=treename)
+            after = href_split[1].format(db=treename)
+            js_funct = f'str.push("{before}" + encodeURIComponent(obj[p]) + "{after}");'
+
+            # Build the href to return names JSON
+            remote = "'?text=%QUERY&format=json'"
+            if "db=" in href:
+                # Add tree name to query params
+                remote = f"'?db={treename}&text=%QUERY&format=json'"
+            js += (
+                """
+        $('#search-form').submit(function () {
+            $(this)
+                .find('input[name]')
+                .filter(function () {
+                    return !this.value;
+                })
+                .prop('name', '');
+        });
+        function jump(currentPage) {
+          newPage = prompt("Jump to page", currentPage);
+          if (newPage) {
+            href = window.location.href.replace("page="+currentPage, "page="+newPage);
+            window.location.href = href;
+          }
+        }
+        function configure_typeahead(node) {
+          if (!node.id || !node.id.endsWith("-typeahead")) {
+            return;
+          }
+          table = node.id.replace("-typeahead", "");
+          var bloodhound = new Bloodhound({
+            datumTokenizer: Bloodhound.tokenizers.obj.nonword('short_label', 'label', 'synonym'),
+            queryTokenizer: Bloodhound.tokenizers.nonword,
+            sorter: function(a, b) {
+              return a.order - b.order;
+            },
+            remote: {
+              url: """
+                + remote
+                + """,
+              wildcard: '%QUERY',
+              transform : function(response) {
+                  return bloodhound.sorter(response);
+              }
+            }
+          });
+          $(node).typeahead({
+            minLength: 0,
+            hint: false,
+            highlight: true
+          }, {
+            name: table,
+            source: bloodhound,
+            display: function(item) {
+              if (item.label && item.short_label && item.synonym) {
+                return item.short_label + ' - ' + item.label + ' - ' + item.synonym;
+              } else if (item.label && item.short_label) {
+                return item.short_label + ' - ' + item.label;
+              } else if (item.label && item.synonym) {
+                return item.label + ' - ' + item.synonym;
+              } else if (item.short_label && item.synonym) {
+                return item.short_label + ' - ' + item.synonym;
+              } else if (item.short_label && !item.label) {
+                return item.short_label;
+              } else {
+                return item.label;
+              }
+            },
+            limit: 40
+          });
+          $(node).bind('click', function(e) {
+            $(node).select();
+          });
+          $(node).bind('typeahead:select', function(ev, suggestion) {
+            $(node).prev().val(suggestion.id);
+            go(table, suggestion.id);
+          });
+          $(node).bind('keypress',function(e) {
+            if(e.which == 13) {
+              go(table, $('#' + table + '-hidden').val());
+            }
+          });
+        }
+        $('.typeahead').each(function() { configure_typeahead(this); });
+        function go(table, value) {
+          q = {}
+          table = table.replace('_all', '');
+          q[table] = value
+          window.location = query(q);
+        }
+        function query(obj) {
+          var str = [];
+          for (var p in obj)
+            if (obj.hasOwnProperty(p)) {
+              """
+                + js_funct
+                + """
+            }
+          return str.join("&");
+        }"""
+            )
+
+        body.append(["script", {"type": "text/javascript"}, js])
+
         # HTML Headers & CSS
         head = [
             "head",
@@ -498,16 +519,7 @@ def tree(
     return render(all_prefixes, html, href=href, db=treename)
 
 
-def annotations2rdfa(
-    treename: str,
-    data: dict,
-    predicate_ids: list,
-    term_id: str,
-    stanza: list,
-    href: str = "?term={curie}",
-) -> list:
-    """Create a hiccup-style vector for the annotation on a term."""
-    # The subjects in the stanza that are of type owl:Axiom:
+def get_nested_annotations(stanza):
     annotation_bnodes = set()
     for row in stanza:
         if row["predicate"] == "owl:annotatedSource":
@@ -591,9 +603,26 @@ def annotations2rdfa(
         pred2val[target_predicate] = annotated_values
         spv2annotation[source] = pred2val
 
+    return spv2annotation
+
+
+def annotations2rdfa(
+    treename: str,
+    data: dict,
+    predicate_ids: list,
+    term_id: str,
+    stanza: list,
+    href: str = "?term={curie}",
+) -> list:
+    """Create a hiccup-style vector for the annotation on a term."""
+    # The subjects in the stanza that are of type owl:Axiom:
+
     # The initial hiccup, which will be filled in later:
     items = ["ul", {"id": "annotations", "class": "col-md"}]
     labels = data["labels"]
+
+    # source -> predicate -> value -> axiom annotation (as predicate -> row)
+    spv2annotation = get_nested_annotations(stanza)
 
     # s2 maps the predicates of the given term to their corresponding rows (there can be more than
     # one row per predicate):
@@ -623,7 +652,7 @@ def annotations2rdfa(
             o = ["li", row2o(stanza, data, row)]
 
             # Check for axiom annotations and create nested
-            nest = build_nested(treename, data, labels, spv2annotation, term_id, row, [], href=href)
+            nest = build_nested(treename, data, spv2annotation, term_id, row, [], href=href)
             if nest:
                 o += nest
 
@@ -637,7 +666,6 @@ def annotations2rdfa(
 def build_nested(
     treename: str,
     data: dict,
-    labels: dict,
     spv2annotation: dict,
     source: str,
     row: dict,
@@ -662,7 +690,7 @@ def build_nested(
                             [
                                 "a",
                                 {"href": href.format(curie=ann_predicate, db=treename)},
-                                labels.get(ann_predicate, ann_predicate),
+                                data["labels"].get(ann_predicate, ann_predicate),
                             ],
                         ],
                     ]
@@ -674,7 +702,6 @@ def build_nested(
                         build_nested(
                             treename,
                             data,
-                            labels,
                             spv2annotation,
                             ar["subject"],
                             ar,
@@ -683,59 +710,6 @@ def build_nested(
                         )
                     ele.append(["ul", anchor, ["ul"] + ax_os])
     return ele
-
-
-def thing2rdfa(
-    conn: Connection,
-    all_prefixes: list,
-    treename: str,
-    predicate_ids: list,
-    title: str = None,
-    href: str = "?id={curie}",
-):
-    """Create a hiccup-style HTML vector for owl:Thing as the parent of all top-level terms."""
-    # Select all classes without parents and set them as children of owl:Thing
-    results = conn.execute(
-        """SELECT DISTINCT subject FROM statements 
-        WHERE subject NOT IN 
-            (SELECT subject FROM statements
-             WHERE predicate = 'rdfs:subClassOf')
-        AND subject IN 
-            (SELECT subject FROM statements 
-             WHERE predicate = 'rdf:type'
-             AND object = 'owl:Class' AND subject NOT LIKE '_:%%');"""
-    )
-    add_children = [x["subject"] for x in results if x["subject"] != "owl:Thing"]
-    results = conn.execute(
-        """SELECT stanza, subject, predicate, object, value, datatype, language
-           FROM statements WHERE stanza = 'owl:Thing'"""
-    )
-    stanza = []
-    for res in results:
-        stanza.append(dict(res))
-    if not stanza:
-        stanza = [
-            {
-                "stanza": "owl:Thing",
-                "subject": "owl:Thing",
-                "predicate": "rdf:type",
-                "object": "owl:Class",
-                "value": None,
-                "datatype": None,
-                "language": None,
-            }
-        ]
-    return term2rdfa(
-        conn,
-        all_prefixes,
-        treename,
-        predicate_ids,
-        "owl:Thing",
-        stanza,
-        title=title,
-        add_children=add_children,
-        href=href,
-    )
 
 
 def curie2iri(prefixes: list, curie: str) -> str:
@@ -750,92 +724,27 @@ def curie2iri(prefixes: list, curie: str) -> str:
     raise ValueError(f"No matching prefix for {curie}")
 
 
-def get_entity_type(conn: Connection, term_id: str) -> str:
-    """Get the OWL entity type for a term."""
-    query = sql_text(
-        """SELECT object FROM statements WHERE stanza = :term_id
-        AND subject = :term_id AND predicate = 'rdf:type'"""
-    )
-    results = list(conn.execute(query, term_id=term_id))
-    if len(results) > 1:
-        for res in results:
-            if res["object"] in TOP_LEVELS:
-                return res["object"]
-        return "owl:Individual"
-    elif len(results) == 1:
-        entity_type = results[0]["object"]
-        if entity_type == "owl:NamedIndividual":
-            entity_type = "owl:Individual"
-        return entity_type
-    else:
-        entity_type = None
-        query = sql_text(
-            "SELECT predicate FROM statements WHERE stanza = :term_id AND subject = :term_id"
-        )
-        results = conn.execute(query, term_id=term_id)
-        preds = [row["predicate"] for row in results]
-        if "rdfs:subClassOf" in preds:
-            return "owl:Class"
-        elif "rdfs:subPropertyOf" in preds:
-            return "owl:AnnotationProperty"
-        if not entity_type:
-            query = sql_text("SELECT predicate FROM statements WHERE object = :term_id")
-            results = conn.execute(query, term_id=term_id)
-            preds = [row["predicate"] for row in results]
-            if "rdfs:subClassOf" in preds:
-                return "owl:Class"
-            elif "rdfs:subPropertyOf" in preds:
-                return "owl:AnnotationProperty"
-    return "owl:Class"
-
-
 def get_hierarchy(
-    conn: Connection, term_id: str, entity_type: str, add_children: list = None
+    conn: Connection,
+    term_id: str,
+    entity_type: str,
+    add_children: list = None,
+    statements: str = "statements",
 ) -> (dict, set):
     """Return a hierarchy dictionary for a term and all its ancestors and descendants."""
     # Build the hierarchy
     if entity_type == "owl:Individual":
         query = sql_text(
-            """SELECT DISTINCT object AS parent, subject AS child FROM statements
-            WHERE stanza = :term_id
-             AND subject = :term_id
-             AND predicate = 'rdf:type'
-             AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
-             AND object NOT LIKE '_:%%'"""
+            f"""SELECT DISTINCT object AS parent, subject AS child FROM {statements}
+                WHERE stanza = :term_id
+                 AND subject = :term_id
+                 AND predicate = 'rdf:type'
+                 AND object NOT IN ('owl:Individual', 'owl:NamedIndividual')
+                 AND object NOT LIKE '_:%%'"""
         )
-        results = conn.execute(query, term_id=term_id)
+        results = [[x["parent"], x["child"]] for x in conn.execute(query, term_id=term_id)]
     else:
-        pred = "rdfs:subPropertyOf"
-        if entity_type == "owl:Class":
-            pred = "rdfs:subClassOf"
-        query = sql_text(
-            """WITH RECURSIVE ancestors(parent, child) AS (
-            VALUES (:term_id, NULL)
-            UNION
-            -- The children of the given term:
-            SELECT object AS parent, subject AS child
-            FROM statements
-            WHERE predicate = :pred
-              AND object = :term_id
-            UNION
-            --- Children of the children of the given term
-            SELECT object AS parent, subject AS child
-            FROM statements
-            WHERE object IN (SELECT subject FROM statements
-                             WHERE predicate = :pred AND object = :term_id)
-              AND predicate = :pred
-            UNION
-            -- The non-blank parents of all of the parent terms extracted so far:
-            SELECT object AS parent, subject AS child
-            FROM statements, ancestors
-            WHERE ancestors.parent = statements.stanza
-              AND statements.predicate = :pred
-              AND statements.object NOT LIKE '_:%%'
-          )
-          SELECT * FROM ancestors"""
-        )
-        results = conn.execute(query, term_id=term_id, pred=pred)
-    results = [[x["parent"], x["child"]] for x in results]
+        results = get_parent_child_pairs(conn, term_id, statements=statements)
     if add_children:
         results.extend([[term_id, child] for child in add_children])
 
@@ -888,7 +797,9 @@ def get_hierarchy(
     return hierarchy, curies
 
 
-def get_sorted_predicates(conn: Connection, exclude_ids: list = None) -> list:
+def get_sorted_predicates(
+    conn: Connection, exclude_ids: list = None, statements: str = "statements"
+) -> list:
     """Return a list of predicates IDs sorted by their label, optionally excluding some predicate
     IDs. If the predicate does not have a label, use the ID as the label."""
     exclude = None
@@ -896,15 +807,15 @@ def get_sorted_predicates(conn: Connection, exclude_ids: list = None) -> list:
         exclude = ", ".join([f"'{x}'" for x in exclude_ids])
 
     # Retrieve all predicate IDs
-    results = conn.execute("SELECT DISTINCT predicate FROM statements")
+    results = conn.execute(f"SELECT DISTINCT predicate FROM {statements}")
     all_predicate_ids = [x["predicate"] for x in results]
     if exclude:
         all_predicate_ids = [x for x in all_predicate_ids if x not in exclude_ids]
 
     # Retrieve predicates with labels
     query = sql_text(
-        """SELECT DISTINCT subject, value
-        FROM statements WHERE subject IN :ap AND predicate = 'rdfs:label';"""
+        f"""SELECT DISTINCT subject, value
+            FROM {statements} WHERE subject IN :ap AND predicate = 'rdfs:label';"""
     ).bindparams(bindparam("ap", expanding=True))
     results = conn.execute(query, {"ap": all_predicate_ids})
     predicate_label_map = {x["subject"]: x["value"] for x in results}
@@ -918,15 +829,16 @@ def get_sorted_predicates(conn: Connection, exclude_ids: list = None) -> list:
     return [k for k, v in sorted(predicate_label_map.items(), key=lambda x: x[1].lower())]
 
 
-def get_ontology(conn: Connection, prefixes: list) -> (str, str):
+def get_ontology(conn: Connection, prefixes: list, statements: str = "statements") -> (str, str):
     """Get the ontology IRI and title (or None).
 
     :param conn: database connection
     :param prefixes: list of prefix tuples (prefix, base)
+    :param statements: name of the statements table (default: statements)
     :return: IRI, title or None
     """
     res = conn.execute(
-        "SELECT subject FROM statements WHERE predicate = 'rdf:type' AND object = 'owl:Ontology'"
+        f"SELECT subject FROM {statements} WHERE predicate = 'rdf:type' AND object = 'owl:Ontology'"
     ).fetchone()
     if not res:
         return None, None
@@ -936,12 +848,29 @@ def get_ontology(conn: Connection, prefixes: list) -> (str, str):
         if base == "http://purl.org/dc/terms/":
             dct = f"{prefix}:title"
     query = sql_text(
-        "SELECT value FROM statements WHERE stanza = :iri AND subject = :iri AND predicate = :dct"
+        f"SELECT value FROM {statements} WHERE stanza = :iri AND subject = :iri AND predicate = :dct"
     )
     res = conn.execute(query, iri=iri, dct=dct).fetchone()
     if not res:
         return iri, None
     return iri, res["value"]
+
+
+def get_labels(conn, curies, include_top=True, ontology_iri=None, ontology_title=None, statements="statements"):
+    labels = {}
+    query = sql_text(
+        f"""SELECT subject, value FROM {statements}
+            WHERE stanza IN :ids AND predicate = 'rdfs:label' AND value IS NOT NULL"""
+    ).bindparams(bindparam("ids", expanding=True))
+    results = conn.execute(query, {"ids": list(curies)})
+    for res in results:
+        labels[res["subject"]] = res["value"]
+    if include_top:
+        for t, o_label in TOP_LEVELS.items():
+            labels[t] = o_label
+    if ontology_iri and ontology_title:
+        labels[ontology_iri] = ontology_title
+    return labels
 
 
 def term2rdfa(
@@ -954,13 +883,17 @@ def term2rdfa(
     title: str = None,
     add_children: list = None,
     href: str = "?id={curie}",
+    max_children: int = 100,
+    statements: str = "statements",
 ) -> (str, str):
     """Create a hiccup-style HTML vector for the given term."""
-    ontology_iri, ontology_title = get_ontology(conn, prefixes)
+    ontology_iri, ontology_title = get_ontology(conn, prefixes, statements=statements)
     if term_id not in TOP_LEVELS:
         # Get a hierarchy under the entity type
-        entity_type = get_entity_type(conn, term_id)
-        hierarchy, curies = get_hierarchy(conn, term_id, entity_type, add_children=add_children)
+        entity_type = get_entity_type(conn, term_id, statements=statements)
+        hierarchy, curies = get_hierarchy(
+            conn, term_id, entity_type, add_children=add_children, statements=statements
+        )
     else:
         # Get the top-level for this entity type
         entity_type = term_id
@@ -975,19 +908,19 @@ def term2rdfa(
                 # No user input, safe to use f-string for query
                 tls = ", ".join([f"'{x}'" for x in TOP_LEVELS.keys()])
                 results = conn.execute(
-                    f"""SELECT DISTINCT subject FROM statements
+                    f"""SELECT DISTINCT subject FROM {statements}
                     WHERE subject NOT IN
-                        (SELECT subject FROM statements
+                        (SELECT subject FROM {statements}
                          WHERE predicate = 'rdf:type'
                          AND object NOT IN ('owl:Individual', 'owl:NamedIndividual'))
                     AND subject IN
-                        (SELECT subject FROM statements
+                        (SELECT subject FROM {statements}
                          WHERE predicate = 'rdf:type' AND object NOT IN ({tls}))"""
                 )
             elif term_id == "rdfs:Datatype":
                 results = conn.execute(
-                    """SELECT DISTINCT subject FROM statements
-                    WHERE predicate = 'rdf:type' AND object = 'rdfs:Datatype'"""
+                    f"""SELECT DISTINCT subject FROM {statements}
+                        WHERE predicate = 'rdf:type' AND object = 'rdfs:Datatype'"""
                 )
             else:
                 pred = "rdfs:subPropertyOf"
@@ -995,13 +928,13 @@ def term2rdfa(
                     pred = "rdfs:subClassOf"
                 # Select all classes without parents and set them as children of owl:Thing
                 query = sql_text(
-                    """SELECT DISTINCT subject FROM statements 
+                    f"""SELECT DISTINCT subject FROM {statements} 
                     WHERE subject NOT IN 
-                        (SELECT subject FROM statements
+                        (SELECT subject FROM {statements}
                          WHERE predicate = :pred
                          AND object != 'owl:Thing')
                     AND subject IN 
-                        (SELECT subject FROM statements 
+                        (SELECT subject FROM {statements} 
                          WHERE predicate = 'rdf:type'
                          AND object = :term_id AND subject NOT LIKE '_:%%'
                          AND subject NOT IN ('owl:Thing', 'rdf:type'));"""
@@ -1012,7 +945,7 @@ def term2rdfa(
             if pred and children:
                 # Get children of children for classes & properties
                 query = sql_text(
-                    """SELECT DISTINCT object AS parent, subject AS child FROM statements
+                    f"""SELECT DISTINCT object AS parent, subject AS child FROM {statements}
                     WHERE predicate = :pred AND object IN :children"""
                 ).bindparams(bindparam("pred"), bindparam("children", expanding=True))
                 results = conn.execute(query, {"pred": pred, "children": children})
@@ -1048,23 +981,12 @@ def term2rdfa(
 
     # Get all of the rdfs:labels corresponding to all of the compact URIs, in the form of a map
     # from compact URIs to labels:
-    labels = {}
-    query = sql_text(
-        """SELECT subject, value FROM statements
-        WHERE stanza IN :ids AND predicate = 'rdfs:label' AND value IS NOT NULL"""
-    ).bindparams(bindparam("ids", expanding=True))
-    results = conn.execute(query, {"ids": list(curies)})
-    for res in results:
-        labels[res["subject"]] = res["value"]
-    for t, o_label in TOP_LEVELS.items():
-        labels[t] = o_label
-    if ontology_iri and ontology_title:
-        labels[ontology_iri] = ontology_title
+    labels = get_labels(conn, curies, ontology_iri=ontology_iri, ontology_title=ontology_title, statements=statements)
 
     obsolete = []
     query = sql_text(
-        """SELECT DISTINCT subject FROM statements
-        WHERE stanza in :ids AND predicate='owl:deprecated' AND value='true'"""
+        f"""SELECT DISTINCT subject FROM {statements}
+            WHERE stanza in :ids AND predicate='owl:deprecated' AND value='true'"""
     ).bindparams(bindparam("ids", expanding=True))
     results = conn.execute(query, {"ids": list(curies)})
     for res in results:
@@ -1108,7 +1030,9 @@ def term2rdfa(
         si = curie2iri(prefixes, subject)
         subject_label = label
 
-    rdfa_tree = term2tree(data, treename, term_id, entity_type, href=href)
+    rdfa_tree = term2tree(
+        data, treename, term_id, entity_type, href=href, max_children=max_children
+    )
 
     if not title:
         title = treename + " Browser"
@@ -1260,14 +1184,14 @@ def term2tree(
         if data[treename][oc]["children"]:
             o.append(PLUS)
         attrs = {}
-        if len(children) > max_children:
+        if len(children) >= max_children:
             attrs["style"] = "display: none"
         children.append(["li", attrs, o])
 
-        if len(children) == max_children:
-            total = len(term_tree["children"])
-            attrs = {"href": "javascript:show_children()"}
-            children.append(["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]])
+    if len(children) >= max_children:
+        total = len(term_tree["children"])
+        attrs = {"href": f"javascript:show_children()"}
+        children.append(["li", {"id": "more"}, ["a", attrs, f"Click to show all {total} ..."]])
     children = ["ul", {"id": "children"}] + children
     if len(children) == 0:
         children = ""
