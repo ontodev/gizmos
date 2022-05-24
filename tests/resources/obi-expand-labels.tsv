@@ -1,0 +1,18 @@
+ID	Label	Reason
+BFO:0000001	entity	defined in input
+BFO:0000002	continuant	descendant of entity
+BFO:0000003	occurrent	ancestor of 'background correction data transformation' & descendant of entity
+BFO:0000004	independent continuant	descendant of entity
+BFO:0000015	process	ancestor of 'background correction data transformation' & descendant of entity
+BFO:0000040	material entity	descendant of entity
+OBI:0000011	planned process	ancestor of 'background correction data transformation' & descendant of entity
+OBI:0000576	scattered molecular aggregate	descendant of entity
+OBI:0000666	background correction data transformation	defined in input
+OBI:0000793	double blind study execution	descendant of entity
+OBI:0000804	informing investigator of subject study arm	descendant of entity
+OBI:0000822	single blind study execution	descendant of entity
+OBI:0000826	treatment portion of study execution	descendant of entity
+OBI:0000842	informing subject of study arm	descendant of entity
+OBI:0100046	phosphate buffered saline solution	descendant of entity
+OBI:0200000	data transformation	ancestor of 'background correction data transformation' & descendant of entity
+OBI:0302729	chemical solution	descendant of entity

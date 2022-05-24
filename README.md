@@ -56,9 +56,9 @@ When using `gizmos` as a Python module, all operations accept a `sqlalchemy` Con
 
 ## Modules
 
-### `gizmos.check`
+### `check`
 
-The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `gizmos.check` before using the other commands.
+The `check` module validates a SQLite database for use with other `gizmos` modules. We recommend running your database through `check` before using the other commands.
 ```
 python3 -m gizmos.check [path-to-database]
 ```
@@ -75,7 +75,20 @@ This command will check that both the `prefix` and `statements` tables exist wit
 
 All errors are logged, and if errors are found, the command will exit with status code `1`. Only the first 10 messages about specific rows in the `statements` table are logged to save time. If you wish to override this, use the `--limit <int>`/`-l <int>` option. To print all messages, include `--limit none`.
 
-### `gizmos.export`
+### `expand`
+
+The `expand` module takes an [import table](#creating-import-modules) and creates an explicit import table that contains all terms that will be in the extracted module and the reason that they are included. The reason will be one of: ancestor, child, descendant, or parent of an included term.
+```
+python3 -m gizmos.expand -d [path-to-database] -i [import-table] > [output-tsv]
+```
+
+The default output format is TSV, but if you want to write a CSV, you can include `-f csv`/`--format csv`.
+
+By default for each reason, up to three terms are included (e.g. if a term is a descendant of included terms X, Y, Z). When the term is related to more than three terms, the reason will be shown as "descendant of N terms", where N is the number of terms. You can change this limit with `-l`/`--limit`. The limit must be a whole integer.
+
+`expand` also includes the `-I`/`--intermediates` option, like `extract`. You should include this option if you plan to include it when you create your extracted module. For more details on this option, see [`extract`](#extract).
+
+### `export`
 
 The `export` module creates a table (default TSV) output containing the terms and their predicates written to stdout.
 ```
@@ -120,7 +133,7 @@ If an ontology term has more than one value for a given predicate, it will be re
 
 If you have many predicates to include, you can use `-P <file>`/`--predicates <file>` for a list of predicates (CURIE or label), each on one line.
 
-### `gizmos.extract`
+### `extract`
 
 The `extract` module creates a TTL or JSON-LD file containing the term, predicates, and ancestors written to stdout.
 ```
@@ -141,7 +154,7 @@ Finally, if you want to annotate all extracted terms with a source ontology IRI,
 
 #### Creating Import Modules
 
-`gizmos.extract` can also be used with import configuration files (`-i <file>`/`--imports <file>`):
+`extract` can also be used with import configuration files (`-i <file>`/`--imports <file>`):
 
 ```
 python3 -m gizmos.extract -d [path-to-database] -i [path-to-imports] > [output-ttl]
@@ -181,7 +194,7 @@ This is a TSV or CSV with the following headers:
 
 The config file can be useful for handling multiple imports with different options in a `Makefile`. If your imports all use the same `--intermediates` option and the same predicates, there is no need to specify a config file.
 
-### `gizmos.search`
+### `search`
 
 The `search` module returns a list of JSON objects for use with the tree browser search bar.
 
@@ -222,7 +235,7 @@ Search is run over all three properties, so even if a term's label does not matc
 
 Finally, the search only returns the first 30 results by default. If you wish to return less or more, you can specify this with `--limit <int>`/`-l <int>`.
 
-### `gizmos.tree`
+### `tree`
 
 The `tree` module produces a CGI tree browser for a given term contained in a SQL database.
 
@@ -248,7 +261,7 @@ The `term` should be a CURIE with a prefix already defined in the `prefix` table
 
 This can be useful when writing scripts that return trees from different databases.
 
-If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of [`gizmos.search`](#gizmos.search). The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
+If you provide the `-s`/`--include-search` flag, a search bar will be included in the page. This search bar uses [typeahead.js](https://twitter.github.io/typeahead.js/) and expects the output of [`search`](#gizmos.search). The URL for the fetching the data for [Bloodhound](https://github.com/twitter/typeahead.js/blob/master/doc/bloodhound.md) is `?text=[search-text]&format=json`, or `?db=[db]&text=[search-text]&format=json` if the `-d` flag is also provided. The `format=json` is provided as a flag for use in scripts. See the CGI Example below for details on implementation.
 
 The title displayed in the HTML output is the database file name. If you'd like to override this, you can use the `-t <title>`/`--title <title>` option. This is full HTML page. If you just want the content without `<html>` and `<body>` tags, include `-c`/`--content-only`.
 
@@ -270,7 +283,7 @@ The formatting string must contain `{curie}`, and optionally contain `{db}`. Any
 
 #### Predicates
 
-When displaying a term, `gizmos.tree` will display all predicate-value pairs listed in alphabetical order by predicate label on the right-hand side of the window. You can define which predicates to include with the `-p`/`--predicate` and `-P`/`--predicates` options.
+When displaying a term, `tree` will display all predicate-value pairs listed in alphabetical order by predicate label on the right-hand side of the window. You can define which predicates to include with the `-p`/`--predicate` and `-P`/`--predicates` options.
 
 You can pass one or more predicate CURIEs in the command line using `-p`/`--predicate`. These will appear in the order that you pass:
 ```
