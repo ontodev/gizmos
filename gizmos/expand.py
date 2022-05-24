@@ -83,6 +83,7 @@ def expand(conn: Connection, rows: List[dict], intermediates="all", limit=3) -> 
     # create dict of explict terms and the reason(s) they are included
     explicit_terms = {}
     for term_id, row in terms.items():
+        logging.error(term_id)
         related = row.get("Related")
         if not related:
             continue
@@ -91,6 +92,7 @@ def expand(conn: Connection, rows: List[dict], intermediates="all", limit=3) -> 
             rel = rel.strip()
             if rel == "ancestors":
                 ancestors = get_ancestors(conn, term_id, set(terms.keys()), intermediates)
+                logging.error(ancestors)
                 if term_id in ancestors:
                     # remove self relation
                     ancestors.remove(term_id)

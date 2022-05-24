@@ -172,6 +172,7 @@ def extract(
     imported_from_property: str = "IAO:0000412",
     intermediates: str = "all",
     no_hierarchy: bool = False,
+    statements: str = "statements",
 ) -> str:
     """Extract terms from the ontology database and return the module as Turtle or JSON-LD."""
     if fmt.lower() not in ["ttl", "json-ld"]:
@@ -185,14 +186,14 @@ def extract(
     clean(conn)
 
     # Create a temp labels table
-    add_labels(conn)
+    add_labels(conn, statements=statements)
 
     # First pass on terms, get all related entities
     ignore = []
     more_terms = set()
     for term_id, details in terms.items():
         # Confirm that this term exists
-        query = sql_text("SELECT * FROM statements WHERE stanza = :term_id LIMIT 1")
+        query = sql_text(f"SELECT * FROM {statements} WHERE stanza = :term_id LIMIT 1")
         res = conn.execute(query, term_id=term_id).fetchone()
         if not res:
             logging.warning(f"'{term_id}' does not exist in database")
@@ -209,12 +210,12 @@ def extract(
                 more_terms.update(get_ancestors(conn, term_id, set(terms.keys()), intermediates))
             elif r == "children":
                 # Just add the direct children
-                more_terms.update(get_children(conn, term_id))
+                more_terms.update(get_children(conn, term_id, statements=statements))
             elif r == "descendants":
                 more_terms.update(get_descendants(conn, term_id, intermediates))
             elif r == "parents":
                 # Just add the direct parents
-                more_terms.update(get_parents(conn, term_id))
+                more_terms.update(get_parents(conn, term_id, statements=statements))
             else:
                 # TODO: should this just warn and continue?
                 raise Exception(f"unknown 'Related' keyword for '{term_id}': " + r)
@@ -254,18 +255,18 @@ def extract(
         # Insert all predicates
         if str(conn.engine.url).startswith("sqlite"):
             conn.execute(
-                """INSERT OR IGNORE INTO tmp_predicates
-                SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN
-                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')"""
+                f"""INSERT OR IGNORE INTO tmp_predicates
+                 SELECT DISTINCT predicate
+                 FROM {statements} WHERE predicate NOT IN
+                   ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')"""
             )
         else:
             conn.execute(
-                """INSERT INTO tmp_predicates
-                SELECT DISTINCT predicate
-                FROM statements WHERE predicate NOT IN
-                  ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')
-                ON CONFLICT (predicate) DO NOTHING"""
+                f"""INSERT INTO tmp_predicates
+                 SELECT DISTINCT predicate
+                 FROM {statements} WHERE predicate NOT IN
+                   ('rdfs:subClassOf', 'rdfs:subPropertyOf', 'rdf:type')
+                 ON CONFLICT (predicate) DO NOTHING"""
             )
 
     # Add subclass/subproperty/type relationships to terms table
@@ -283,8 +284,9 @@ def extract(
         # Otherwise only add the parent if we want a hierarchy
         # Check for the first ancestor we can find with all terms considered "top level"
         # In many cases, this is just the direct parent
-        parents = set()
-        get_top_ancestors(conn, parents, term_id, top_terms=set(terms.keys()))
+        parents = get_top_ancestors(
+            conn, term_id, statements=statements, top_terms=set(terms.keys())
+        )
         parents = parents.intersection(set(terms.keys()))
         if parents:
             # Maintain these relationships in the import module
@@ -309,31 +311,35 @@ def extract(
 
     # Insert rdf:type declarations - only for OWL entities
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate = 'rdf:type'
-          AND object IN
-          ('owl:Class', 'owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty', 'owl:NamedIndividual')"""
+        f"""INSERT INTO tmp_extract
+         SELECT * FROM {statements}
+         WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+           AND predicate = 'rdf:type'
+           AND object IN
+           ('owl:Class',
+            'owl:AnnotationProperty',
+            'owl:DataProperty',
+            'owl:ObjectProperty',
+            'owl:NamedIndividual')"""
     )
 
     # Insert subproperty statements for any property types
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
-        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
-           AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
-           AND subject NOT LIKE '_:%%')"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+         SELECT DISTINCT child, child, 'rdfs:subPropertyOf', parent
+         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+           (SELECT subject FROM {statements} WHERE predicate = 'rdf:type'
+            AND object IN ('owl:AnnotationProperty', 'owl:DataProperty', 'owl:ObjectProperty')
+            AND subject NOT LIKE '_:%%')"""
     )
 
     # Insert subclass statements for any class types
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
-        FROM tmp_terms WHERE parent IS NOT NULL AND child IN
-          (SELECT subject FROM statements WHERE predicate = 'rdf:type'
-           AND object = 'owl:Class' AND subject NOT LIKE '_:%%')"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+         SELECT DISTINCT child, child, 'rdfs:subClassOf', parent
+         FROM tmp_terms WHERE parent IS NOT NULL AND child IN
+           (SELECT subject FROM {statements} WHERE predicate = 'rdf:type'
+            AND object = 'owl:Class' AND subject NOT LIKE '_:%%')"""
     )
 
     # Everything else is an instance
@@ -348,33 +354,31 @@ def extract(
 
     # Insert literal annotations
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT *
-        FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate IN (SELECT predicate FROM tmp_predicates)
-          AND value IS NOT NULL"""
+        f"""INSERT INTO tmp_extract
+            SELECT * FROM {statements}
+            WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND predicate IN (SELECT predicate FROM tmp_predicates)
+              AND value IS NOT NULL"""
     )
 
     # Insert logical relationships (object must be in set of input terms)
     conn.execute(
-        """INSERT INTO tmp_extract
-        SELECT * FROM statements
-        WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND predicate IN (SELECT predicate FROM tmp_predicates)
-          AND object IN (SELECT DISTINCT child FROM tmp_terms)"""
+        f"""INSERT INTO tmp_extract
+            SELECT * FROM {statements}
+            WHERE subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND predicate IN (SELECT predicate FROM tmp_predicates)
+              AND object IN (SELECT DISTINCT child FROM tmp_terms)"""
     )
 
     # Insert IRI annotations (object does not have to be in input terms)
     conn.execute(
-        """INSERT INTO tmp_extract (stanza, subject, predicate, object)
-        SELECT s1.stanza, s1.subject, s1.predicate, s1.object
-        FROM statements s1
-        JOIN statements s2 ON s1.predicate = s2.subject
-        WHERE s1.subject IN (SELECT DISTINCT child FROM tmp_terms)
-          AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
-          AND s2.object = 'owl:AnnotationProperty'
-          AND s1.object IS NOT NULL"""
+        f"""INSERT INTO tmp_extract (stanza, subject, predicate, object)
+            SELECT s1.stanza, s1.subject, s1.predicate, s1.object FROM {statements} s1
+            JOIN {statements} s2 ON s1.predicate = s2.subject
+            WHERE s1.subject IN (SELECT DISTINCT child FROM tmp_terms)
+              AND s1.predicate IN (SELECT predicate FROM tmp_predicates)
+              AND s2.object = 'owl:AnnotationProperty'
+              AND s1.object IS NOT NULL"""
     )
 
     # Finally, if imported_from IRI is included, add this to add terms

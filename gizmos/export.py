@@ -132,14 +132,16 @@ def get_iri(prefixes: dict, term: str) -> str:
     return namespace + local_id
 
 
-def get_objects(conn: Connection, prefixes: dict, term: str, predicate_ids: dict) -> dict:
+def get_objects(
+    conn: Connection, prefixes: dict, term: str, predicate_ids: dict, statements: str = "statements"
+) -> dict:
     """Get a dict of predicate label -> objects. The object will either be the term ID or label,
     when the label exists."""
     predicates = [x for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
     term_objects = defaultdict(list)
     query = sql_text(
         f"""SELECT DISTINCT predicate, s.object AS object, l.label AS object_label
-            FROM statements s JOIN tmp_labels l ON s.object = l.term
+            FROM {statements} s JOIN tmp_labels l ON s.object = l.term
             WHERE s.subject = :term AND s.predicate IN :predicates"""
     ).bindparams(bindparam("predicates", expanding=True), bindparam("term"))
     results = conn.execute(query, {"term": term, "predicates": predicates})
@@ -163,7 +165,9 @@ def get_objects(conn: Connection, prefixes: dict, term: str, predicate_ids: dict
     return term_objects
 
 
-def get_predicate_ids(conn: Connection, id_or_labels: list = None) -> dict:
+def get_predicate_ids(
+    conn: Connection, id_or_labels: list = None, statements: str = "statements"
+) -> dict:
     """Create a map of predicate label or full header (if the header has a value format) -> ID."""
     predicate_ids = {}
     if id_or_labels:
@@ -189,8 +193,8 @@ def get_predicate_ids(conn: Connection, id_or_labels: list = None) -> dict:
         return predicate_ids
 
     results = conn.execute(
-        """SELECT DISTINCT s.predicate AS term, l.label AS label
-           FROM statements s JOIN tmp_labels l ON s.predicate = l.term"""
+        f"""SELECT DISTINCT s.predicate AS term, l.label AS label
+            FROM {statements} s JOIN tmp_labels l ON s.predicate = l.term"""
     )
     for res in results:
         predicate_ids[res["term"]] = res["label"]
@@ -213,7 +217,9 @@ def get_string_value(value_format: str, vo: dict) -> str:
     return vo.get("iri") or vo["id"]
 
 
-def get_term_details(conn: Connection, prefixes: dict, term: str, predicate_ids: dict) -> dict:
+def get_term_details(
+    conn: Connection, prefixes: dict, term: str, predicate_ids: dict, statements: str = "statements"
+) -> dict:
     """Get a dict of predicate label -> object or value."""
     term_details = {}
 
@@ -231,8 +237,8 @@ def get_term_details(conn: Connection, prefixes: dict, term: str, predicate_ids:
         term_details["label"] = base_dict
 
     # Get all details
-    term_details.update(get_values(conn, term, predicate_ids))
-    term_details.update(get_objects(conn, prefixes, term, predicate_ids))
+    term_details.update(get_values(conn, term, predicate_ids, statements=statements))
+    term_details.update(get_objects(conn, prefixes, term, predicate_ids, statements=statements))
 
     # TODO - maybe remove this block
     """# Format predicates with multiple values - a single value should not be an array
@@ -246,13 +252,15 @@ def get_term_details(conn: Connection, prefixes: dict, term: str, predicate_ids:
     return term_details
 
 
-def get_values(conn: Connection, term: str, predicate_ids: dict) -> dict:
+def get_values(
+    conn: Connection, term: str, predicate_ids: dict, statements: str = "statements"
+) -> dict:
     """Get a dict of predicate label -> literal values."""
     predicates = [x for x in predicate_ids.keys() if x not in ["CURIE", "IRI", "label"]]
     term_values = defaultdict(list)
     query = sql_text(
-        """SELECT DISTINCT predicate, value FROM statements s
-        WHERE subject = :term AND predicate IN :predicates AND value IS NOT NULL"""
+        f"""SELECT DISTINCT predicate, value FROM {statements} s
+            WHERE subject = :term AND predicate IN :predicates AND value IS NOT NULL"""
     ).bindparams(bindparam("predicates", expanding=True), bindparam("term"))
     result = conn.execute(query, {"term": term, "predicates": predicates})
     for res in result:
@@ -432,13 +440,27 @@ def export(
     terms: list,
     predicates: list,
     fmt: str,
-    split: str = "|",
-    standalone: bool = True,
     default_value_format: str = "IRI",
     no_headers: bool = False,
+    split: str = "|",
+    standalone: bool = True,
+    statements: str = "statements",
     where: str = None,
 ) -> str:
-    """Retrieve details for given terms and render in the given format."""
+    """Retrieve details for given terms and render in the given format.
+
+    :param conn: SQLAlchemy database connection
+    :param terms: list of terms to export (by ID or label)
+    :param predicates: list of properties to include in export
+    :param fmt: output format of export (tsv, csv, or html)
+    :param default_value_format: how values should be rendered (IRI, CURIE, or label)
+    :param no_headers: if true, do not include the header row in export
+    :param split: character to split multiple values on in single cell
+    :param standalone: if true and format is HTML, include HTML headers
+    :param statements: name of the ontology statements table
+    :param where: SQL WHERE statement to include in query to get terms
+    :return: string export in given format
+    """
 
     # Validate default format
     if default_value_format not in ["CURIE", "IRI", "label"]:
@@ -453,7 +475,7 @@ def export(
 
     # Create a tmp labels table & add all labels
     conn.execute("DROP TABLE IF EXISTS tmp_labels")
-    add_labels(conn)
+    add_labels(conn, statements=statements)
 
     if terms:
         term_ids = get_ids(conn, terms)
@@ -461,10 +483,10 @@ def export(
         term_ids = []
         if where:
             # Use provided query filter to select terms
-            query = "SELECT DISTINCT stanza FROM statements WHERE " + where
+            query = f"SELECT DISTINCT stanza FROM {statements} WHERE " + where
         else:
             # Get all, excluding blank nodes
-            query = "SELECT DISTINCT stanza FROM statements WHERE stanza NOT LIKE '_:%%'"
+            query = f"SELECT DISTINCT stanza FROM {statements} WHERE stanza NOT LIKE '_:%%'"
         for res in conn.execute(query):
             term_ids.append(res["stanza"])
 
@@ -472,7 +494,7 @@ def export(
         # Get all predicates if not provided
         predicate_ids = {default_value_format: default_value_format}
         value_formats = {default_value_format: default_value_format.lower()}
-        predicate_ids.update(get_predicate_ids(conn))
+        predicate_ids.update(get_predicate_ids(conn, statements=statements))
         query = sql_text(
             "SELECT DISTINCT label FROM tmp_labels WHERE term IN :predicates"
         ).bindparams(bindparam("predicates", expanding=True))
@@ -481,7 +503,7 @@ def export(
 
     else:
         # Current predicates are IDs or labels - make sure we get all the IDs
-        predicate_ids = get_predicate_ids(conn, predicates)
+        predicate_ids = get_predicate_ids(conn, predicates, statements=statements)
         value_formats = {}
         for p in predicates:
             if p in ["CURIE", "IRI", "label"]:
@@ -500,7 +522,7 @@ def export(
 
     # Get the term details
     for term in term_ids:
-        term_details = get_term_details(conn, prefixes, term, predicate_ids)
+        term_details = get_term_details(conn, prefixes, term, predicate_ids, statements=statements)
         details[term] = term_details
 
     return render_output(
