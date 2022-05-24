@@ -230,18 +230,20 @@ def tree(
     if include_search:
         body_wrapper.append(
             [
-                "div",
-                {"class": "form-row mt-2 mb-2"},
+                "form",
+                {"class": "form-row mt-2 mb-2", "method": "get"},
                 [
                     "input",
                     {
                         "id": f"statements-typeahead",
+                        "name": "search_text",
                         "class": "typeahead form-control",
                         "type": "text",
                         "value": "",
                         "placeholder": "Search",
                     },
                 ],
+                ["input", {"name": "db", "value": treename, "type": "hidden"}],
             ]
         )
     body = body_wrapper + body
